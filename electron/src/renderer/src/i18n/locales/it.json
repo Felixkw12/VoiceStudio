@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Controlla audio",
+    "failed": "Analisi audio non disponibile.",
+    "advisory": "Solo indicativo: pause e variazioni di volume possono essere intenzionali. L’audio resta invariato.",
+    "truncated": "L’analisi o l’elenco degli avvisi è limitato.",
+    "clear": "Nessun problema rilevato nella parte analizzata.",
+    "empty": "Audio vuoto",
+    "silence": "Possibile silenzio",
+    "quiet": "Volume insolitamente basso",
+    "loud": "Volume insolitamente alto",
+    "clipping": "Possibile clipping",
+    "invalid": "Campioni audio non validi"
+  },
   "twilioIntegration": {
     "exposureWarning": "Attivandolo si apre una porta locale separata che il tuo tunnel pubblica su internet. Sono accettate solo richieste firmate con il tuo Auth Token Twilio; il resto di VoiceStudio resta privato.",
     "accountSid": "Account SID",
@@ -359,6 +372,14 @@
     "starting_recording": "Avvio…",
     "unsupported_audio": "Scegli un file audio supportato: WAV, MP3, M4A, FLAC, OGG, AAC o WebM.",
     "saved_profiles": "Profili salvati",
+    "export_prompts": "Esporta prompt",
+    "prompts_exported": "Prompt vocali esportati",
+    "prompts_export_failed": "Impossibile esportare i prompt vocali.",
+    "prompt_intro": "Scegli una voce qui sotto. Usa lingua, personalità e stile come indicazioni vocali.",
+    "prompt_audio_note": "Questo prompt contiene solo testo. Una voce clonata richiede l’audio di riferimento per riprodurre il suo suono; esporta una persona per includere l’audio.",
+    "prompt_profile_id": "ID profilo",
+    "prompt_type": "Tipo di voce",
+    "prompt_personality": "Personalità",
     "transcript": "Trascrizione",
     "style": "Stile",
     "save_as_profile": "Salva come profilo vocale",
@@ -1919,6 +1940,8 @@
     "stretch_subs_note": "Estendi video: esporta i sottotitoli separatamente."
   },
   "models": {
+    "pack_needs_models": "Modelli necessari",
+    "pack_not_ready": "Pacchetto non attivo: installa prima i modelli mancanti in Impostazioni → Modelli.",
     "pack_title": "Pacchetti di modelli",
     "pack_for": "Ottimizzato per {{device}}",
     "pack_desc": "Scegli un livello, controlla i modelli locali e lo spazio richiesto, quindi installa e attiva il set in un solo passaggio. Diarizzazione e LLM restano scelte separate.",

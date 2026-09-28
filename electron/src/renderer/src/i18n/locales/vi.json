@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Kiểm tra âm thanh",
+    "failed": "Không thể phân tích âm thanh.",
+    "advisory": "Chỉ mang tính tham khảo: khoảng nghỉ và thay đổi âm lượng có thể là chủ ý. Âm thanh không bị thay đổi.",
+    "truncated": "Phân tích hoặc danh sách cảnh báo bị giới hạn.",
+    "clear": "Không phát hiện vấn đề trong phần đã phân tích.",
+    "empty": "Âm thanh trống",
+    "silence": "Có thể có khoảng lặng",
+    "quiet": "Âm lượng thấp bất thường",
+    "loud": "Âm lượng cao bất thường",
+    "clipping": "Có thể bị cắt đỉnh",
+    "invalid": "Mẫu âm thanh không hợp lệ"
+  },
   "twilioIntegration": {
     "exposureWarning": "Bật tính năng này sẽ mở một cổng cục bộ riêng mà đường hầm của bạn công bố ra internet. Chỉ các yêu cầu được ký bằng Auth Token Twilio của bạn mới được chấp nhận; phần còn lại của VoiceStudio vẫn riêng tư.",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "Đang bắt đầu…",
     "unsupported_audio": "Chọn tệp âm thanh được hỗ trợ: WAV, MP3, M4A, FLAC, OGG, AAC hoặc WebM.",
     "saved_profiles": "Hồ sơ đã lưu",
+    "export_prompts": "Xuất lời nhắc",
+    "prompts_exported": "Đã xuất lời nhắc giọng nói",
+    "prompts_export_failed": "Không thể xuất lời nhắc giọng nói.",
+    "prompt_intro": "Chọn một giọng bên dưới. Dùng ngôn ngữ, tính cách và phong cách của giọng đó làm hướng dẫn nói.",
+    "prompt_audio_note": "Đây chỉ là lời nhắc văn bản. Giọng nhân bản cần âm thanh tham chiếu để tái tạo âm sắc; hãy xuất persona để mang theo âm thanh.",
+    "prompt_profile_id": "ID hồ sơ",
+    "prompt_type": "Loại giọng",
+    "prompt_personality": "Tính cách",
     "transcript": "bảng điểm",
     "style": "phong cách",
     "save_as_profile": "Lưu dưới dạng hồ sơ giọng nói",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "Kéo giãn video: xuất phụ đề riêng."
   },
   "models": {
+    "pack_needs_models": "Cần mô hình",
+    "pack_not_ready": "Gói chưa hoạt động: hãy cài các mô hình còn thiếu trong Cài đặt → Mô hình trước.",
     "pack_title": "Gói mô hình",
     "pack_for": "Tinh chỉnh cho {{device}}",
     "pack_desc": "Chọn một mức, xem các mô hình cục bộ và dung lượng đĩa, rồi cài đặt và kích hoạt cả bộ trong một bước. Phân tách người nói và LLM vẫn là lựa chọn riêng.",

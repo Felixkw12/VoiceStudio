@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Revisar audio",
+    "failed": "Análisis de audio no disponible.",
+    "advisory": "Solo orientativo: las pausas y el volumen expresivo pueden ser intencionales. El audio no cambia.",
+    "truncated": "El análisis o la lista de avisos está limitado.",
+    "clear": "No se detectaron problemas en la parte analizada.",
+    "empty": "Audio vacío",
+    "silence": "Posible silencio",
+    "quiet": "Volumen inusualmente bajo",
+    "loud": "Volumen inusualmente alto",
+    "clipping": "Posible saturación",
+    "invalid": "Muestras de audio no válidas"
+  },
   "twilioIntegration": {
     "exposureWarning": "Al activarlo se abre un puerto local independiente que tu túnel publica en internet. Solo se aceptan solicitudes firmadas con tu Auth Token de Twilio; el resto de VoiceStudio sigue siendo privado.",
     "accountSid": "Account SID",
@@ -359,6 +372,14 @@
     "starting_recording": "Iniciando…",
     "unsupported_audio": "Elige un archivo de audio compatible: WAV, MP3, M4A, FLAC, OGG, AAC o WebM.",
     "saved_profiles": "Perfiles guardados",
+    "export_prompts": "Exportar indicaciones",
+    "prompts_exported": "Indicaciones de voz exportadas",
+    "prompts_export_failed": "No se pudieron exportar las indicaciones de voz.",
+    "prompt_intro": "Elige una voz de abajo. Usa su idioma, personalidad y estilo como instrucciones para hablar.",
+    "prompt_audio_note": "Esta indicación solo contiene texto. Una voz clonada necesita su audio de referencia para reproducir su sonido; exporta una persona para incluirlo.",
+    "prompt_profile_id": "ID del perfil",
+    "prompt_type": "Tipo de voz",
+    "prompt_personality": "Personalidad",
     "transcript": "Transcripción",
     "style": "Estilo",
     "save_as_profile": "Guardar como perfil de voz",
@@ -1919,6 +1940,8 @@
     "stretch_subs_note": "Estirar vídeo: exporta los subtítulos por separado."
   },
   "models": {
+    "pack_needs_models": "Se requieren modelos",
+    "pack_not_ready": "Paquete no activo: instala primero los modelos que faltan en Ajustes → Modelos.",
     "pack_title": "Paquetes de modelos",
     "pack_for": "Ajustado para {{device}}",
     "pack_desc": "Elige un nivel, revisa sus modelos locales y el espacio necesario, e instala y activa el conjunto en un paso. La diarización y el LLM siguen siendo opciones explícitas.",

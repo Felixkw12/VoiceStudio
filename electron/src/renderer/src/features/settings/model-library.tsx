@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangleIcon,
@@ -31,7 +31,7 @@ import {
   useModelInstallJobs,
   type ModelInstallJob,
 } from '@/hooks/use-model-install-sync';
-import { usePerformanceProfile } from '@/hooks/use-performance-profile';
+import { usePerformanceProfile, type PerformanceTier } from '@/hooks/use-performance-profile';
 import { PerformanceProfile } from '@/components/performance-profile';
 import { SettingsSection, SettingsRow } from './settings-layout';
 import { familyIcons, type ModelFamily } from './model-family';
@@ -115,7 +115,17 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
     staleTime: 30_000,
   });
   const [starting, setStarting] = useState(false);
-  const tier = profile.data?.global ?? 'balanced';
+  const [preview, setPreview] = useState<PerformanceTier | null>(null);
+  const [pending, setPending] = useState<{
+    tier: PerformanceTier;
+    target: string;
+    previous: PerformanceTier;
+  } | null>(null);
+  const applying = useRef(false);
+  const tier = preview ?? profile.data?.global ?? 'balanced';
+  useEffect(() => {
+    setPreview(null);
+  }, [profile.data?.global]);
   const pack = resolvePerformanceModelPack(catalogue.data?.models ?? [], tier);
   const installTarget = catalogue.data?.target ?? 'local';
   const packRepos = new Set(pack.models.map((model) => model.repo_id));
@@ -130,7 +140,9 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
   const progressTotal = activeJobs.reduce((total, job) => total + (job.total_bytes ?? 0), 0);
   const progress = progressTotal > 0 ? Math.round((progressBytes / progressTotal) * 100) : null;
   const diskFree = catalogue.data?.disk_free_gb;
-  const lowDisk = diskFree != null && pack.downloadGb + 10 > diskFree;
+  // Activation reuses installed files; reserve download space only when
+  // this pack actually needs installation (including unknown-size models).
+  const lowDisk = pack.missing.length > 0 && diskFree != null && pack.downloadGb + 10 > diskFree;
   const busy = starting || profile.isSaving || activeJobs.length > 0;
 
   const refresh = () =>
@@ -144,11 +156,9 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
     if (!profile.data || lowDisk) return;
     setStarting(true);
     try {
-      // Persist the requested policy before starting downloads. The backend
-      // reconciles this profile after each successful model install, making
-      // the pack active without another selection or an app restart.
-      await profile.setTier({ tier, family: null });
       if (pack.missing.length === 0) {
+        await profile.setTier({ tier, family: null });
+        setPreview(null);
         toast.success(t('models.pack_ready', { tier: t('performanceProfile.' + tier) }));
         return;
       }
@@ -164,6 +174,7 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
       const started = results.filter((result) => result.status === 'fulfilled').length;
       if (started > 0) toast.success(t('models.started_downloading', { count: started }));
       if (failed?.status === 'rejected') toast.error(describeError(failed.reason));
+      if (!failed) setPending({ tier, target: installTarget, previous: profile.data.global });
       await refresh();
     } catch (error) {
       toast.error(t('models.install_failed', { message: describeError(error) }));
@@ -171,6 +182,29 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
       setStarting(false);
     }
   };
+
+  useEffect(() => {
+    if (!pending || !catalogue.data || !profile.data || applying.current) return;
+    // Never let a completed download overwrite a newer choice or remote target.
+    if (pending.target !== installTarget || pending.previous !== profile.data.global) {
+      setPending(null);
+      return;
+    }
+    const ready = resolvePerformanceModelPack(catalogue.data.models, pending.tier);
+    if (!ready.models.length || ready.missing.length) return;
+    applying.current = true;
+    setPending(null);
+    void profile
+      .setTier({ tier: pending.tier, family: null })
+      .then(() => {
+        setPreview(null);
+        toast.success(t('models.pack_ready', { tier: t('performanceProfile.' + pending.tier) }));
+      })
+      .catch((error) => toast.error(describeError(error)))
+      .finally(() => {
+        applying.current = false;
+      });
+  }, [pending, catalogue.data, profile.data, profile.setTier, installTarget, t]);
 
   if (!catalogue.data || !profile.data)
     return (
@@ -205,7 +239,18 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
           </span>
         </div>
 
-        <PerformanceProfile variant="settings" />
+        <PerformanceProfile
+          variant="settings"
+          previewTier={tier}
+          onChooseTier={() => {
+            setPending(null);
+            setPreview(null);
+          }}
+          onPreviewTier={(next) => {
+            setPending(null);
+            setPreview(next);
+          }}
+        />
 
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,15rem),1fr))] gap-2">
           {pack.models.map((model) => {
@@ -259,7 +304,7 @@ export function PerformanceModelPacks({ compact = false }: { compact?: boolean }
         )}
 
         {lowDisk && (
-          <p role="alert" className="flex items-start gap-2 text-xs text-warning-foreground">
+          <p role="alert" className="flex items-start gap-2 text-xs text-destructive">
             <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
             {t('models.reco_low_disk', { need: pack.downloadGb.toFixed(1), free: diskFree })}
           </p>
@@ -418,7 +463,7 @@ export function SystemRecommendations() {
         {lowDisk && (
           <p
             role="alert"
-            className="flex items-start gap-2 text-xs leading-relaxed text-warning-foreground"
+            className="flex items-start gap-2 text-xs leading-relaxed text-destructive"
           >
             <AlertTriangleIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             {t('models.reco_low_disk', {

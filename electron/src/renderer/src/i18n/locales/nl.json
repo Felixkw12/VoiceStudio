@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Audio controleren",
+    "failed": "Audioanalyse niet beschikbaar.",
+    "advisory": "Alleen ter indicatie: pauzes en volumeverschillen kunnen bedoeld zijn. Audio blijft ongewijzigd.",
+    "truncated": "De analyse of waarschuwingslijst is beperkt.",
+    "clear": "Geen problemen gevonden in het geanalyseerde gedeelte.",
+    "empty": "Lege audio",
+    "silence": "Mogelijke stilte",
+    "quiet": "Ongewoon zacht",
+    "loud": "Ongewoon luid",
+    "clipping": "Mogelijke oversturing",
+    "invalid": "Ongeldige audiosamples"
+  },
   "twilioIntegration": {
     "exposureWarning": "Inschakelen opent een aparte lokale poort die je tunnel op internet publiceert. Alleen verzoeken die met je Twilio Auth Token zijn ondertekend worden geaccepteerd; de rest van VoiceStudio blijft privé.",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "Starten…",
     "unsupported_audio": "Kies een ondersteund audiobestand: WAV, MP3, M4A, FLAC, OGG, AAC of WebM.",
     "saved_profiles": "Opgeslagen profielen",
+    "export_prompts": "Prompts exporteren",
+    "prompts_exported": "Stemprompts geëxporteerd",
+    "prompts_export_failed": "Kan stemprompts niet exporteren.",
+    "prompt_intro": "Kies hieronder een stem. Gebruik taal, persoonlijkheid en stijl als spreekinstructies.",
+    "prompt_audio_note": "Dit is alleen een tekstprompt. Een gekloonde stem heeft de referentieaudio nodig om hetzelfde te klinken; exporteer een persona om de audio mee te nemen.",
+    "prompt_profile_id": "Profiel-ID",
+    "prompt_type": "Stemtype",
+    "prompt_personality": "Persoonlijkheid",
     "transcript": "Afschrift",
     "style": "Stijl",
     "save_as_profile": "Opslaan als stemprofiel",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "Video uitrekken: exporteer ondertitels afzonderlijk."
   },
   "models": {
+    "pack_needs_models": "Modellen vereist",
+    "pack_not_ready": "Pakket niet actief: installeer eerst de ontbrekende modellen via Instellingen → Modellen.",
     "pack_title": "Modelpakketten",
     "pack_for": "Afgestemd op {{device}}",
     "pack_desc": "Kies een niveau, controleer de lokale modellen en schijfruimte en installeer en activeer de set in één stap. Diarisatie en LLM blijven aparte keuzes.",

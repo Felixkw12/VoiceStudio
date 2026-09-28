@@ -47,6 +47,22 @@ _ogg_state_lock = threading.Lock()
 _ogg_encode_locks = weakref.WeakValueDictionary()
 
 
+@router.get('/audio/{audio_id}/quality')
+def generated_audio_quality(audio_id: str):
+    """Analyze a generated WAV locally, off the async event loop."""
+    from services.audio_quality import analyze_audio
+
+    if not re.fullmatch(r'[0-9a-f]{8}', audio_id):
+        raise HTTPException(status_code=404, detail='Audio file not found')
+    path = _safe_output_path(f'{audio_id}.wav')
+    if path is None or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail='Audio file not found')
+    try:
+        return analyze_audio(path)
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=422, detail='Audio analysis unavailable') from None
+
+
 def _ogg_cache_key(path: str) -> tuple[str, int, int, int]:
     info = os.stat(path)
     return path, info.st_ino, info.st_mtime_ns, info.st_size

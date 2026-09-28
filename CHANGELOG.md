@@ -26,6 +26,7 @@ metadata and the backend fallback mirror it.
 
 ### Added
 
+- Check generated speech for seekable silence, volume and clipping warnings without changing the audio (#2375)
 - Run local narration, transcription, translation and voice-conversion recipes with resumable steps and WAV/TXT exports (#2333)
 
 - Call agent backend: place or answer phone calls that hold a task conversation in your verified or designed voice, with an editable AI disclosure, take-over and an after-call summary (#2306)
@@ -57,6 +58,8 @@ metadata and the backend fallback mirror it.
 
 ### Fixed
 
+- Keep sidebar and Settings pack activation consistent, guide missing packs to Models without duplicate errors, and skip download-space checks for installed packs (#2386)
+- Keep one sidebar expand/collapse control on macOS and size idle and recording menu-bar icons consistently (#2157)
 - macOS development launches use the maintained Electron version and icon paths (#2351)
 - Electron detects and repairs incomplete PyTorch, torchaudio and torchvision runtime wheels before backend startup (#2354) — thanks @jonathanmoronta1-lab!
 - Returning to local mode discards sessions from unsaved remote-backend connection tests (#2356)

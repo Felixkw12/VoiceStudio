@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "检查音频",
+    "failed": "音频分析不可用。",
+    "advisory": "仅供参考：停顿和音量变化可能是有意的。音频不会被修改。",
+    "truncated": "分析范围或警告列表有限。",
+    "clear": "在已分析的部分未发现问题。",
+    "empty": "空音频",
+    "silence": "可能存在静音",
+    "quiet": "音量异常偏低",
+    "loud": "音量异常偏高",
+    "clipping": "可能存在削波",
+    "invalid": "无效音频采样"
+  },
   "twilioIntegration": {
     "exposureWarning": "开启后会打开一个单独的本地端口，由你的隧道发布到互联网。只接受使用你的 Twilio Auth Token 签名的请求；VoiceStudio 的其余部分保持私密。",
     "accountSid": "Account SID",
@@ -374,6 +387,14 @@
     "starting_recording": "正在启动…",
     "unsupported_audio": "请选择支持的音频文件：WAV、MP3、M4A、FLAC、OGG、AAC 或 WebM。",
     "saved_profiles": "已保存的配置",
+    "export_prompts": "导出提示词",
+    "prompts_exported": "已导出声音提示词",
+    "prompts_export_failed": "无法导出声音提示词。",
+    "prompt_intro": "从下方选择一个声音，将其语言、个性和风格用作朗读指令。",
+    "prompt_audio_note": "这只是文本提示词。克隆声音需要参考音频才能重现音色；请导出角色包以携带音频。",
+    "prompt_profile_id": "配置 ID",
+    "prompt_type": "声音类型",
+    "prompt_personality": "个性",
     "transcript": "参考文本",
     "style": "风格",
     "save_as_profile": "保存为声音配置",
@@ -1921,6 +1942,8 @@
     "stretch_subs_note": "拉伸视频：请单独导出字幕。"
   },
   "models": {
+    "pack_needs_models": "需要模型",
+    "pack_not_ready": "模型包未激活：请先在设置 → 模型中安装缺少的模型。",
     "pack_title": "模型包",
     "pack_for": "已针对 {{device}} 调整",
     "pack_desc": "选择档位，查看本地模型和磁盘占用，然后一步安装并启用整套模型。说话人分离和 LLM 仍需单独选择。",

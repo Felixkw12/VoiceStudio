@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray } from 'electron';
+import { createTrayIcon } from './tray-icon';
 import { electronApp, is, optimizer } from '@electron-toolkit/utils';
 import { BackendSupervisor, backendRoot } from './backend';
 import { registerIpc, wireWindowMaximizeEvents } from './ipc';
@@ -305,7 +306,7 @@ if (process.env.VOICESTUDIO_ALLOW_MULTIPLE_INSTANCES !== '1' && !app.requestSing
       );
       const icon = nativeImage.createFromPath(brandIconPath('icon.png'));
       if (process.platform === 'darwin') app.dock?.setIcon(icon);
-      tray = new Tray(brandIconPath('32x32.png'));
+      tray = new Tray(createTrayIcon(brandIconPath('32x32.png')));
       tray.setToolTip('VoiceStudio');
       closeCapture = installNativeCapture(PRELOAD_PATH, tray, () => mainWindow);
       tray.on('click', () => {

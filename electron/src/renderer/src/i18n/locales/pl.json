@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Sprawdź dźwięk",
+    "failed": "Analiza dźwięku niedostępna.",
+    "advisory": "Tylko wskazówka: pauzy i zmiany głośności mogą być celowe. Dźwięk pozostaje bez zmian.",
+    "truncated": "Analiza lub lista ostrzeżeń jest ograniczona.",
+    "clear": "Nie wykryto problemów w analizowanej części.",
+    "empty": "Puste nagranie",
+    "silence": "Możliwa cisza",
+    "quiet": "Nietypowo cicho",
+    "loud": "Nietypowo głośno",
+    "clipping": "Możliwe przesterowanie",
+    "invalid": "Nieprawidłowe próbki audio"
+  },
   "twilioIntegration": {
     "exposureWarning": "Włączenie otwiera osobny port lokalny, który Twój tunel publikuje w internecie. Akceptowane są tylko żądania podpisane Twoim Auth Token Twilio; reszta VoiceStudio pozostaje prywatna.",
     "accountSid": "Account SID",
@@ -361,6 +374,14 @@
     "starting_recording": "Uruchamianie…",
     "unsupported_audio": "Wybierz obsługiwany plik dźwiękowy: WAV, MP3, M4A, FLAC, OGG, AAC lub WebM.",
     "saved_profiles": "Zapisane profile",
+    "export_prompts": "Eksportuj prompty",
+    "prompts_exported": "Wyeksportowano prompty głosowe",
+    "prompts_export_failed": "Nie udało się wyeksportować promptów głosowych.",
+    "prompt_intro": "Wybierz głos poniżej. Użyj jego języka, osobowości i stylu jako wskazówek dotyczących mówienia.",
+    "prompt_audio_note": "To prompt zawierający tylko tekst. Sklonowany głos wymaga nagrania referencyjnego, aby odtworzyć swoje brzmienie; wyeksportuj personę, aby dołączyć nagranie.",
+    "prompt_profile_id": "ID profilu",
+    "prompt_type": "Typ głosu",
+    "prompt_personality": "Osobowość",
     "transcript": "Transkrypcja",
     "style": "Styl",
     "save_as_profile": "Zapisz jako profil głosowy",
@@ -1921,6 +1942,8 @@
     "stretch_subs_note": "Rozciąganie wideo: wyeksportuj napisy osobno."
   },
   "models": {
+    "pack_needs_models": "Wymagane modele",
+    "pack_not_ready": "Pakiet nieaktywny: najpierw zainstaluj brakujące modele w Ustawienia → Modele.",
     "pack_title": "Pakiety modeli",
     "pack_for": "Dostosowano do {{device}}",
     "pack_desc": "Wybierz poziom, sprawdź lokalne modele i użycie dysku, a następnie zainstaluj i aktywuj zestaw w jednym kroku. Diarizacja i LLM pozostają osobnymi opcjami.",

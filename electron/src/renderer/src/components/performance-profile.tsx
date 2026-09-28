@@ -14,8 +14,11 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { useAppActivities } from '@/lib/app-activity';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useModelCatalogue } from '@/features/settings/model-catalogue-query';
+import { resolvePerformanceModelPack } from '@/features/settings/performance-model-packs';
 import {
   performanceTiers,
+  PackNotReadyError,
   usePerformanceProfile,
   type PerformanceFamily,
   type PerformanceTier,
@@ -25,13 +28,20 @@ export function PerformanceProfile({
   family = null,
   tooltipAnchor,
   variant = 'compact',
+  previewTier,
+  onPreviewTier,
+  onChooseTier,
 }: {
   family?: PerformanceFamily | null;
   tooltipAnchor?: RefObject<HTMLElement | null>;
   variant?: 'compact' | 'settings';
+  previewTier?: PerformanceTier;
+  onPreviewTier?: (tier: PerformanceTier) => void;
+  onChooseTier?: () => void;
 }) {
   const { t } = useTranslation();
   const profile = usePerformanceProfile();
+  const catalogue = useModelCatalogue();
   const activities = useAppActivities();
   const backend = useBackendStatus();
   const engines = useEngines();
@@ -44,6 +54,7 @@ export function PerformanceProfile({
     refetchInterval: (query) => (query.state.data?.length ? 1_000 : 15_000),
   });
   const [failed, setFailed] = useState<PerformanceTier | null>(null);
+  const [blockedTier, setBlockedTier] = useState<PerformanceTier | null>(null);
   const groupId = useId();
   const [draft, setDraft] = useState<number | null>(null);
   const busy =
@@ -53,7 +64,33 @@ export function PerformanceProfile({
     batch.isError ||
     Boolean(batch.data?.length) ||
     Object.values(activities).some((count) => count > 0);
-  const selected = family ? profile.data?.effective[family] : profile.data?.global;
+  const selected = previewTier ?? (family ? profile.data?.effective[family] : profile.data?.global);
+  const selectedPack =
+    family === null && selected && catalogue.data
+      ? resolvePerformanceModelPack(catalogue.data.models, selected)
+      : null;
+  const packNotReady = Boolean(
+    selectedPack && (!selectedPack.models.length || selectedPack.missing.length),
+  );
+  const noticeTier = blockedTier ?? (packNotReady ? selected : null);
+  const packNotice = noticeTier ? (
+    <div
+      role="status"
+      className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-1 text-xs"
+    >
+      <span className="text-destructive">
+        {t('performanceProfile.' + noticeTier)} · {t('models.pack_needs_models')}
+      </span>
+      {variant === 'compact' && (
+        <Link
+          to="/settings/models"
+          className="shrink-0 rounded-sm text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          {t('modelSettings.models')}
+        </Link>
+      )}
+    </div>
+  ) : null;
   const applicable = profile.data?.applicable_families ?? profile.data?.implemented_families ?? [];
   const supported = family === null ? applicable.length > 0 : applicable.includes(family);
   const disabled = busy || !profile.data || !supported;
@@ -64,7 +101,9 @@ export function PerformanceProfile({
     ? 'modelSettings.unavailable'
     : busy
       ? 'engineRuntime.working'
-      : 'engineRuntime.ready';
+      : packNotReady
+        ? 'models.pack_not_ready'
+        : 'engineRuntime.ready';
   const accent = [
     'var(--muted-foreground)',
     'color-mix(in oklab, var(--primary) 72%, var(--foreground))',
@@ -92,6 +131,22 @@ export function PerformanceProfile({
       setDraft(null);
       return;
     }
+    onChooseTier?.();
+    setBlockedTier(null);
+    setFailed(null);
+    const requestedPack =
+      family === null && catalogue.data
+        ? resolvePerformanceModelPack(catalogue.data.models, tier)
+        : null;
+    if (
+      onPreviewTier &&
+      requestedPack &&
+      (!requestedPack.models.length || requestedPack.missing.length)
+    ) {
+      onPreviewTier(tier);
+      setDraft(null);
+      return;
+    }
     setDraft(performanceTiers.indexOf(tier));
     setFailed(null);
     try {
@@ -102,8 +157,12 @@ export function PerformanceProfile({
         }),
       );
     } catch (error) {
-      setFailed(tier);
-      toast.error(describeError(error));
+      if (error instanceof PackNotReadyError) {
+        setBlockedTier(tier);
+      } else {
+        setFailed(tier);
+        toast.error(describeError(error));
+      }
     } finally {
       setDraft(null);
     }
@@ -181,6 +240,7 @@ export function PerformanceProfile({
             );
           })}
         </div>
+        {packNotice}
         {family && (
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-muted-foreground">
             {supported && selectedModel ? (
@@ -291,6 +351,7 @@ export function PerformanceProfile({
           </Slider.Track>
         </Slider.Control>
       </Slider.Root>
+      {packNotice}
       {(failed || profile.isError || batch.isError) && (
         <div role="alert" className="text-xs text-destructive">
           {t('common.error')}
@@ -336,7 +397,7 @@ export function PerformanceProfile({
                 aria-hidden="true"
                 className={cn(
                   'size-1.5 rounded-full',
-                  !supported
+                  !supported || packNotReady
                     ? 'bg-destructive'
                     : busy
                       ? 'animate-pulse bg-amber-400 motion-reduce:animate-none'

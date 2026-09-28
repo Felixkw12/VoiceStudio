@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "音声を確認",
+    "failed": "音声を解析できません。",
+    "advisory": "参考情報です。間や音量の変化は意図的な場合があります。音声は変更されません。",
+    "truncated": "解析範囲または警告一覧に制限があります。",
+    "clear": "解析した部分に問題は検出されませんでした。",
+    "empty": "空の音声",
+    "silence": "無音の可能性",
+    "quiet": "通常より小さい音量",
+    "loud": "通常より大きい音量",
+    "clipping": "クリッピングの可能性",
+    "invalid": "無効な音声サンプル"
+  },
   "twilioIntegration": {
     "exposureWarning": "オンにすると、トンネルがインターネットに公開する別のローカルポートが開きます。Twilio Auth Token で署名されたリクエストのみ受け付け、VoiceStudio のその他の部分は非公開のままです。",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "開始しています…",
     "unsupported_audio": "対応する音声ファイルを選択してください：WAV、MP3、M4A、FLAC、OGG、AAC、WebM。",
     "saved_profiles": "保存されたプロファイル",
+    "export_prompts": "プロンプトを書き出す",
+    "prompts_exported": "音声プロンプトを書き出しました",
+    "prompts_export_failed": "音声プロンプトを書き出せませんでした。",
+    "prompt_intro": "以下から声を選び、言語、個性、スタイルを発話の指示として使ってください。",
+    "prompt_audio_note": "これはテキストのみのプロンプトです。クローン音声の音色を再現するには参照音声が必要です。音声を含めるにはペルソナを書き出してください。",
+    "prompt_profile_id": "プロフィール ID",
+    "prompt_type": "音声の種類",
+    "prompt_personality": "個性",
     "transcript": "成績証明書",
     "style": "スタイル",
     "save_as_profile": "音声プロファイルとして保存",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "動画引き伸ばし：字幕は別途エクスポートしてください。"
   },
   "models": {
+    "pack_needs_models": "モデルが必要です",
+    "pack_not_ready": "パックは未有効です。まず設定 → モデルで不足しているモデルをインストールしてください。",
     "pack_title": "モデルパック",
     "pack_for": "{{device}} 向けに最適化",
     "pack_desc": "レベルを選び、ローカルモデルとディスク使用量を確認して、セットを一度にインストールして有効化します。話者分離と LLM は個別に選択します。",

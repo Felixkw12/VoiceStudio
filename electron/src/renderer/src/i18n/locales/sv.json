@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Kontrollera ljud",
+    "failed": "Ljudanalys är inte tillgänglig.",
+    "advisory": "Endast vägledning: pauser och volymvariationer kan vara avsiktliga. Ljudet ändras inte.",
+    "truncated": "Analysen eller varningslistan är begränsad.",
+    "clear": "Inga problem upptäcktes i den analyserade delen.",
+    "empty": "Tomt ljud",
+    "silence": "Möjlig tystnad",
+    "quiet": "Ovanligt låg volym",
+    "loud": "Ovanligt hög volym",
+    "clipping": "Möjlig klippning",
+    "invalid": "Ogiltiga ljudsamplingar"
+  },
   "twilioIntegration": {
     "exposureWarning": "När detta slås på öppnas en separat lokal port som din tunnel publicerar på internet. Endast förfrågningar signerade med din Twilio Auth Token accepteras; resten av VoiceStudio förblir privat.",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "Startar…",
     "unsupported_audio": "Välj en ljudfil som stöds: WAV, MP3, M4A, FLAC, OGG, AAC eller WebM.",
     "saved_profiles": "Sparade profiler",
+    "export_prompts": "Exportera promptar",
+    "prompts_exported": "Röstpromptar exporterade",
+    "prompts_export_failed": "Det gick inte att exportera röstpromptar.",
+    "prompt_intro": "Välj en röst nedan. Använd dess språk, personlighet och stil som talanvisningar.",
+    "prompt_audio_note": "Detta är bara en textprompt. En klonad röst behöver sitt referensljud för att återge klangen; exportera en persona för att ta med ljudet.",
+    "prompt_profile_id": "Profil-ID",
+    "prompt_type": "Rösttyp",
+    "prompt_personality": "Personlighet",
     "transcript": "Avskrift",
     "style": "Stil",
     "save_as_profile": "Spara som röstprofil",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "Sträck video: exportera undertexter separat."
   },
   "models": {
+    "pack_needs_models": "Modeller krävs",
+    "pack_not_ready": "Paketet är inte aktivt: installera först de saknade modellerna under Inställningar → Modeller.",
     "pack_title": "Modellpaket",
     "pack_for": "Anpassat för {{device}}",
     "pack_desc": "Välj en nivå, granska lokala modeller och diskutrymme och installera och aktivera uppsättningen i ett steg. Talarseparering och LLM förblir separata val.",

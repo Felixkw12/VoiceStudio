@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Periksa audio",
+    "failed": "Analisis audio tidak tersedia.",
+    "advisory": "Hanya saran: jeda dan variasi volume dapat disengaja. Audio tidak diubah.",
+    "truncated": "Analisis atau daftar peringatan dibatasi.",
+    "clear": "Tidak ada masalah terdeteksi pada bagian yang dianalisis.",
+    "empty": "Audio kosong",
+    "silence": "Kemungkinan hening",
+    "quiet": "Volume tidak biasa rendah",
+    "loud": "Volume tidak biasa tinggi",
+    "clipping": "Kemungkinan clipping",
+    "invalid": "Sampel audio tidak valid"
+  },
   "twilioIntegration": {
     "exposureWarning": "Mengaktifkan ini membuka port lokal terpisah yang dipublikasikan tunnel Anda ke internet. Hanya permintaan yang ditandatangani dengan Auth Token Twilio Anda yang diterima; bagian lain VoiceStudio tetap privat.",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "Memulai…",
     "unsupported_audio": "Pilih berkas audio yang didukung: WAV, MP3, M4A, FLAC, OGG, AAC, atau WebM.",
     "saved_profiles": "Profil Tersimpan",
+    "export_prompts": "Ekspor prompt",
+    "prompts_exported": "Prompt suara diekspor",
+    "prompts_export_failed": "Prompt suara tidak dapat diekspor.",
+    "prompt_intro": "Pilih suara di bawah. Gunakan bahasa, kepribadian, dan gayanya sebagai arahan berbicara.",
+    "prompt_audio_note": "Ini hanya prompt teks. Suara kloning memerlukan audio referensinya untuk menghasilkan bunyi yang sama; ekspor persona untuk membawa audio tersebut.",
+    "prompt_profile_id": "ID profil",
+    "prompt_type": "Jenis suara",
+    "prompt_personality": "Kepribadian",
     "transcript": "Transkrip",
     "style": "Gaya",
     "save_as_profile": "Simpan sebagai Profil Suara",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "Regangkan Video: ekspor subtitel secara terpisah."
   },
   "models": {
+    "pack_needs_models": "Model diperlukan",
+    "pack_not_ready": "Paket belum aktif: instal model yang belum tersedia di Pengaturan → Model terlebih dahulu.",
     "pack_title": "Paket model",
     "pack_for": "Disetel untuk {{device}}",
     "pack_desc": "Pilih tingkat, periksa model lokal dan penggunaan disknya, lalu instal dan aktifkan set dalam satu langkah. Diarisasi dan LLM tetap menjadi pilihan tersendiri.",

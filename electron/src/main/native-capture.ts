@@ -17,6 +17,7 @@ import { isTrustedRenderer } from './trusted-renderer';
 import { DictationOutputClient } from './dictation-output';
 import { CaptureSession, type CapturePhase } from './capture-session';
 import { activateLiveWindow, sendToLiveWindow } from './window-safety';
+import { createTrayIcon } from './tray-icon';
 
 /** Dedicated recorder owns the output IPC; ordinary app frames cannot type text. */
 export function installNativeCapture(
@@ -89,7 +90,7 @@ export function installNativeCapture(
     if (!trayLabels) return;
     const labels = trayLabels;
     const shortcut = shortcuts.getState().accelerator;
-    tray.setImage(trayIcon(capturing ? 'tray-recording.png' : '32x32.png'));
+    tray.setImage(createTrayIcon(trayIcon(capturing ? 'tray-recording.png' : '32x32.png')));
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: labels.show, click: () => showMain() },

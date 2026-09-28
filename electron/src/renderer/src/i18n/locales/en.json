@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Check audio",
+    "failed": "Audio analysis unavailable.",
+    "advisory": "Advisory only: pauses and expressive volume can be intentional. Audio is unchanged.",
+    "truncated": "Analysis or warning list is limited.",
+    "clear": "No issues detected in the analyzed portion.",
+    "empty": "Empty audio",
+    "silence": "Possible silence",
+    "quiet": "Unusually quiet",
+    "loud": "Unusually loud",
+    "clipping": "Possible clipping",
+    "invalid": "Invalid audio samples"
+  },
   "twilioIntegration": {
     "exposureWarning": "Turning this on opens a separate local port that your tunnel publishes to the internet. Only requests signed with your Twilio Auth Token are accepted; the rest of VoiceStudio stays private.",
     "accountSid": "Account SID",
@@ -278,6 +291,14 @@
     "saved_profile": "Voice profile saved.",
     "save_failed": "Could not save the voice profile: {{message}}",
     "saved_profiles": "Saved voices",
+    "export_prompts": "Export prompts",
+    "prompts_exported": "Voice prompts exported",
+    "prompts_export_failed": "Could not export voice prompts.",
+    "prompt_intro": "Choose a voice below. Use its language, personality, and style as speaking directions.",
+    "prompt_audio_note": "This is a text-only prompt. A cloned voice needs its reference audio to reproduce its sound; export a persona to carry the audio.",
+    "prompt_profile_id": "Profile ID",
+    "prompt_type": "Voice type",
+    "prompt_personality": "Personality",
     "no_profiles": "No saved voices yet. Upload or record a reference, then save it as a profile.",
     "delete_profile": "Delete voice",
     "delete_profile_confirm": "Delete “{{name}}”? This cannot be undone.",
@@ -2013,6 +2034,8 @@
     "stretch_subs_note": "Stretch Video: export subtitles separately."
   },
   "models": {
+    "pack_needs_models": "Models required",
+    "pack_not_ready": "Pack not active: install its missing models in Settings → Models first.",
     "pack_title": "Model packs",
     "pack_for": "Tuned for {{device}}",
     "pack_desc": "Choose a tier, review its local models and disk use, then install and activate the set in one step. Diarisation and LLM remain explicit choices.",

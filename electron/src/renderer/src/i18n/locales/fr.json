@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Vérifier l’audio",
+    "failed": "Analyse audio indisponible.",
+    "advisory": "À titre indicatif : les pauses et variations de volume peuvent être voulues. L’audio reste inchangé.",
+    "truncated": "L’analyse ou la liste des alertes est limitée.",
+    "clear": "Aucun problème détecté dans la partie analysée.",
+    "empty": "Audio vide",
+    "silence": "Silence possible",
+    "quiet": "Volume inhabituellement faible",
+    "loud": "Volume inhabituellement élevé",
+    "clipping": "Écrêtage possible",
+    "invalid": "Échantillons audio invalides"
+  },
   "twilioIntegration": {
     "exposureWarning": "L'activation ouvre un port local distinct que votre tunnel publie sur internet. Seules les requêtes signées avec votre Auth Token Twilio sont acceptées ; le reste de VoiceStudio reste privé.",
     "accountSid": "Account SID",
@@ -359,6 +372,14 @@
     "starting_recording": "Démarrage…",
     "unsupported_audio": "Choisissez un fichier audio compatible : WAV, MP3, M4A, FLAC, OGG, AAC ou WebM.",
     "saved_profiles": "Profils enregistrés",
+    "export_prompts": "Exporter les instructions",
+    "prompts_exported": "Instructions vocales exportées",
+    "prompts_export_failed": "Impossible d’exporter les instructions vocales.",
+    "prompt_intro": "Choisissez une voix ci-dessous. Utilisez sa langue, sa personnalité et son style comme consignes vocales.",
+    "prompt_audio_note": "Ces instructions sont uniquement textuelles. Une voix clonée a besoin de son audio de référence pour reproduire son timbre ; exportez une persona pour emporter cet audio.",
+    "prompt_profile_id": "ID du profil",
+    "prompt_type": "Type de voix",
+    "prompt_personality": "Personnalité",
     "transcript": "Transcription",
     "style": "Style",
     "save_as_profile": "Enregistrer en tant que profil vocal",
@@ -1919,6 +1940,8 @@
     "stretch_subs_note": "Étirer la vidéo : exportez les sous-titres séparément."
   },
   "models": {
+    "pack_needs_models": "Modèles requis",
+    "pack_not_ready": "Pack inactif : installez d’abord les modèles manquants dans Paramètres → Modèles.",
     "pack_title": "Packs de modèles",
     "pack_for": "Réglé pour {{device}}",
     "pack_desc": "Choisissez un niveau, vérifiez ses modèles locaux et l’espace requis, puis installez et activez l’ensemble en une étape. La diarisation et le LLM restent des choix explicites.",

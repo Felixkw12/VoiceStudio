@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Verificar áudio",
+    "failed": "Análise de áudio indisponível.",
+    "advisory": "Apenas indicativo: pausas e variações de volume podem ser intencionais. O áudio não é alterado.",
+    "truncated": "A análise ou a lista de avisos está limitada.",
+    "clear": "Nenhum problema detectado na parte analisada.",
+    "empty": "Áudio vazio",
+    "silence": "Possível silêncio",
+    "quiet": "Volume incomumente baixo",
+    "loud": "Volume incomumente alto",
+    "clipping": "Possível saturação",
+    "invalid": "Amostras de áudio inválidas"
+  },
   "twilioIntegration": {
     "exposureWarning": "Ativar isto abre uma porta local separada que seu túnel publica na internet. Apenas solicitações assinadas com seu Auth Token do Twilio são aceitas; o restante do VoiceStudio continua privado.",
     "accountSid": "Account SID",
@@ -359,6 +372,14 @@
     "starting_recording": "Iniciando…",
     "unsupported_audio": "Escolha um arquivo de áudio compatível: WAV, MP3, M4A, FLAC, OGG, AAC ou WebM.",
     "saved_profiles": "Perfis salvos",
+    "export_prompts": "Exportar prompts",
+    "prompts_exported": "Prompts de voz exportados",
+    "prompts_export_failed": "Não foi possível exportar os prompts de voz.",
+    "prompt_intro": "Escolha uma voz abaixo. Use o idioma, a personalidade e o estilo como orientações de fala.",
+    "prompt_audio_note": "Este prompt contém apenas texto. Uma voz clonada precisa do áudio de referência para reproduzir seu som; exporte uma persona para levar o áudio.",
+    "prompt_profile_id": "ID do perfil",
+    "prompt_type": "Tipo de voz",
+    "prompt_personality": "Personalidade",
     "transcript": "Transcrição",
     "style": "Estilo",
     "save_as_profile": "Salvar como perfil de voz",
@@ -1919,6 +1940,8 @@
     "stretch_subs_note": "Esticar vídeo: exporte as legendas separadamente."
   },
   "models": {
+    "pack_needs_models": "Modelos necessários",
+    "pack_not_ready": "Pacote inativo: instale primeiro os modelos ausentes em Configurações → Modelos.",
     "pack_title": "Pacotes de modelos",
     "pack_for": "Ajustado para {{device}}",
     "pack_desc": "Escolha um nível, confira os modelos locais e o uso do disco e instale e ative o conjunto em uma etapa. Diarização e LLM continuam sendo escolhas separadas.",

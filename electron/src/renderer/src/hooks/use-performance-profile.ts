@@ -2,9 +2,18 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 import { apiJson } from '@/lib/api/client';
 import { useBackendStatus } from './use-backend-status';
 import { IDLE_STATUS_POLL_MS } from '@/lib/status-polling';
+import { resolvePerformanceModelPack } from '@/features/settings/performance-model-packs';
+import type { ModelCatalogueResponse } from '@/features/settings/model-catalogue-query';
+import { tr } from '@/lib/i18n-text';
 
 export const performanceTiers = ['fast', 'balanced', 'quality', 'max'] as const;
 export type PerformanceTier = (typeof performanceTiers)[number];
+export class PackNotReadyError extends Error {
+  constructor() {
+    super(tr('models.pack_not_ready'));
+    this.name = 'PackNotReadyError';
+  }
+}
 export type PerformanceFamily = 'tts' | 'asr' | 'dictation' | 'diarisation' | 'translation' | 'llm';
 export interface PerformanceProfileState {
   global: PerformanceTier;
@@ -64,9 +73,16 @@ export function usePerformanceProfile() {
       tier: PerformanceTier;
       family: PerformanceFamily | null;
     }) => {
-      // Persist first. The old path waited for the relatively expensive engine
-      // registry probe before sending this request, so the control appeared to
-      // do nothing for several seconds on a cold model catalogue.
+      if (family === null) {
+        // Shared by both UI controls: never persist an incomplete pack as applied.
+        // Fetch fresh installed state, not a possibly stale sidebar cache.
+        const catalogue = await apiJson<ModelCatalogueResponse>('/models');
+        client.setQueryData(['model-catalogue'], catalogue);
+        const pack = resolvePerformanceModelPack(catalogue.models, tier);
+        if (!pack.models.length || pack.missing.length) {
+          throw new PackNotReadyError();
+        }
+      }
       const state = await apiJson<PerformanceProfileState>('/api/settings/performance-profile', {
         method: 'PUT',
         body: JSON.stringify({ tier, family }),

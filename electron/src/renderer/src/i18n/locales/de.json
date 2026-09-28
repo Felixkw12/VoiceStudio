@@ -1,4 +1,17 @@
 {
+  "audioQuality": {
+    "check": "Audio prüfen",
+    "failed": "Audioanalyse nicht verfügbar.",
+    "advisory": "Nur ein Hinweis: Pausen und Lautstärke können beabsichtigt sein. Audio bleibt unverändert.",
+    "truncated": "Analyse oder Warnungsliste ist begrenzt.",
+    "clear": "Im analysierten Abschnitt wurden keine Probleme erkannt.",
+    "empty": "Leere Audiodatei",
+    "silence": "Mögliche Stille",
+    "quiet": "Ungewöhnlich leise",
+    "loud": "Ungewöhnlich laut",
+    "clipping": "Mögliche Übersteuerung",
+    "invalid": "Ungültige Audiodaten"
+  },
   "twilioIntegration": {
     "exposureWarning": "Beim Einschalten wird ein separater lokaler Port geöffnet, den dein Tunnel im Internet veröffentlicht. Nur mit deinem Twilio Auth Token signierte Anfragen werden akzeptiert; der Rest von VoiceStudio bleibt privat.",
     "accountSid": "Account SID",
@@ -357,6 +370,14 @@
     "starting_recording": "Wird gestartet…",
     "unsupported_audio": "Wähle eine unterstützte Audiodatei: WAV, MP3, M4A, FLAC, OGG, AAC oder WebM.",
     "saved_profiles": "Gespeicherte Profile",
+    "export_prompts": "Prompts exportieren",
+    "prompts_exported": "Stimmen-Prompts exportiert",
+    "prompts_export_failed": "Stimmen-Prompts konnten nicht exportiert werden.",
+    "prompt_intro": "Wähle unten eine Stimme. Nutze Sprache, Persönlichkeit und Stil als Sprechanweisung.",
+    "prompt_audio_note": "Dies ist ein reiner Text-Prompt. Eine geklonte Stimme braucht ihr Referenzaudio, um ihren Klang wiederzugeben; exportiere eine Persona, um das Audio mitzunehmen.",
+    "prompt_profile_id": "Profil-ID",
+    "prompt_type": "Stimmtyp",
+    "prompt_personality": "Persönlichkeit",
     "transcript": "Transkript",
     "style": "Stil",
     "save_as_profile": "Als Sprachprofil speichern",
@@ -1917,6 +1938,8 @@
     "stretch_subs_note": "Video strecken: Untertitel separat exportieren."
   },
   "models": {
+    "pack_needs_models": "Modelle erforderlich",
+    "pack_not_ready": "Paket nicht aktiv: Installiere zuerst die fehlenden Modelle unter Einstellungen → Modelle.",
     "pack_title": "Modellpakete",
     "pack_for": "Abgestimmt auf {{device}}",
     "pack_desc": "Wähle eine Stufe, prüfe lokale Modelle und Speicherbedarf und installiere und aktiviere das Paket in einem Schritt. Sprechertrennung und LLM bleiben eigene Optionen.",
