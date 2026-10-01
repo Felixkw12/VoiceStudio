@@ -30,7 +30,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SLUG = "debpalash/VoiceStudio"
-SIGNATURES = "origin/cla-signatures:signatures/cla.json"
+SIGNATURES = "origin/cla-signatures:signatures/v1/cla.json"
 EXEMPT = re.compile(r"^(debpalash|.*\[bot\])$")
 BINARY = re.compile(r"\.(lock|png|jpe?g|gif|webp|ico|icns|svg|wav|mp3|flac|ogg|woff2?|ttf|pdf|onnx|bin)$", re.I)
 NOREPLY = re.compile(r"^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$", re.I)

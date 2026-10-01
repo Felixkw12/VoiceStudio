@@ -1,7 +1,9 @@
 # Contributor License Agreement check.
 #
-# Each PR author signs .github/CLA.md once by commenting on a PR. Signatures are
-# committed to the `cla-signatures` branch, not `main`.
+# Each PR author signs .github/CLA-1.0.md once by commenting on a PR. Signatures are
+# committed to the `cla-signatures` branch, not `main`. CLA-1.0.md is pinned
+# by hash in tests/test_cla_workflow.py; a new version gets a new file, sign
+# phrase, and signatures path, so every contributor re-signs it.
 #
 # Security: pull_request_target runs with a write token on PRs from forks, so
 # this workflow must never check out or execute pull-request code.
@@ -30,22 +32,22 @@ jobs:
       github.event_name == 'pull_request_target' ||
       (github.event.issue.pull_request &&
        (github.event.comment.body == 'recheck' ||
-        github.event.comment.body == 'I have read the VoiceStudio CLA and I hereby sign it.'))
+        github.event.comment.body == 'I have read the VoiceStudio CLA 1.0 and I hereby sign it.'))
     runs-on: ubuntu-22.04
     steps:
       - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA.md
-          path-to-signatures: signatures/cla.json
+          path-to-document: https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA-1.0.md
+          path-to-signatures: signatures/v1/cla.json
           branch: cla-signatures
           allowlist: debpalash,*[bot]
-          custom-pr-sign-comment: I have read the VoiceStudio CLA and I hereby sign it.
+          custom-pr-sign-comment: I have read the VoiceStudio CLA 1.0 and I hereby sign it.
           custom-notsigned-prcomment: >-
             Thank you for contributing to VoiceStudio. Before we can merge this
             pull request, each commit author must sign our
-            [Contributor License Agreement](https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA.md)
+            [Contributor License Agreement](https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA-1.0.md)
             once. You keep your copyright; the agreement lets the maintainer
             ship your work in both the AGPL-3.0 app and commercial builds. To
             sign, post the comment below.

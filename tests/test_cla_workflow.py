@@ -1,12 +1,16 @@
 """Guards for the Contributor License Agreement check (.github/workflows/cla.yml).
 
-The dual-licence model relies on every contributor signing .github/CLA.md. These
-tests keep the signing phrase consistent between the workflow and the docs, keep
-the linked agreement present, and keep privileged workflows from running
-pull-request code.
+The dual-licence model relies on every contributor signing .github/CLA-1.0.md.
+A signature is evidence of agreement to one exact text, so published agreements
+are pinned by hash: changing the terms means a new version file, sign phrase,
+and signatures path, never an edit in place. These tests also keep the sign
+phrase consistent across the workflow and docs, and keep privileged workflows
+from running pull-request code.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from pathlib import Path
 
 import yaml
@@ -17,6 +21,12 @@ _CLA_WORKFLOW = _WORKFLOWS / "cla.yml"
 _DOC_PREFIX = "https://github.com/debpalash/VoiceStudio/blob/main/"
 # Triggers that run with a write token and repository secrets, even on fork PRs.
 _PRIVILEGED_TRIGGERS = {"pull_request_target", "issue_comment", "workflow_run"}
+# SHA-256 of each published agreement with LF line endings. Never update a hash:
+# publish a new version file instead, so existing signatures keep their text.
+_PUBLISHED_AGREEMENTS = {
+    ".github/CLA-1.0.md": "88766ef4f61c93b169e381dbe78ab5eeeb77fef82a87136715eff3f480b51df8",
+    ".github/CCLA-1.0.md": "e2875366cd36f06e2278ea6155fc5c316bf320cdb5c214ad2d18edb32a857d56",
+}
 
 
 def _load(path: Path) -> dict:
@@ -43,11 +53,28 @@ def test_cla_document_link_points_at_a_file_in_this_repo():
     assert (_REPO / url.removeprefix(_DOC_PREFIX)).is_file(), url
 
 
-def test_sign_phrase_matches_workflow_filter_and_contributing():
-    phrase = _cla_step()["with"]["custom-pr-sign-comment"]
-    job_filter = _load(_CLA_WORKFLOW)["jobs"]["cla"]["if"]
-    assert f"'{phrase}'" in job_filter
-    assert phrase in (_REPO / ".github" / "CONTRIBUTING.md").read_text(encoding="utf-8")
+def test_sign_phrase_matches_workflow_filter_and_docs():
+    step = _cla_step()["with"]
+    phrase = step["custom-pr-sign-comment"]
+    assert f"'{phrase}'" in _load(_CLA_WORKFLOW)["jobs"]["cla"]["if"]
+    document = _REPO / step["path-to-document"].removeprefix(_DOC_PREFIX)
+    for path in (document, _REPO / ".github" / "CONTRIBUTING.md"):
+        assert phrase in path.read_text(encoding="utf-8"), path
+
+
+def test_document_sign_phrase_and_signature_store_share_one_version():
+    step = _cla_step()["with"]
+    (doc_version,) = re.findall(r"CLA-(\d+)\.(\d+)\.md$", step["path-to-document"])
+    assert f"CLA {doc_version[0]}.{doc_version[1]} " in step["custom-pr-sign-comment"]
+    assert step["path-to-signatures"] == f"signatures/v{doc_version[0]}/cla.json"
+
+
+def test_published_agreements_are_never_edited():
+    for path, expected in _PUBLISHED_AGREEMENTS.items():
+        text = (_REPO / path).read_text(encoding="utf-8").replace("\r\n", "\n")
+        assert hashlib.sha256(text.encode()).hexdigest() == expected, (
+            f"{path} changed. Publish the new terms as a new version file instead."
+        )
 
 
 def test_signatures_are_not_committed_to_main():

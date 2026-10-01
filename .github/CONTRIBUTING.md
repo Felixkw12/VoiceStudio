@@ -328,7 +328,7 @@ hard rules from the first prompt.
 
 VoiceStudio is **AGPL-3.0-only**, and the maintainer also offers a
 **commercial license** (see [LICENSE-NOTICE.md](../LICENSE-NOTICE.md)). Every
-commit author signs the [Contributor License Agreement](CLA.md) once before
+commit author signs the [Contributor License Agreement](CLA-1.0.md) once before
 their first pull request can merge. You keep your copyright. The agreement
 lets the maintainer ship your work in both the AGPL-3.0 app and commercial
 builds, and commits to keeping it available under an open-source licence.
@@ -336,14 +336,14 @@ builds, and commits to keeping it available under an open-source licence.
 The **CLA** check comments on your first pull request. To sign, reply with:
 
 ```text
-I have read the VoiceStudio CLA and I hereby sign it.
+I have read the VoiceStudio CLA 1.0 and I hereby sign it.
 ```
 
 The signature covers your earlier and future contributions. If the check
 reports an unknown author, add your commit email to your GitHub account (or
 set `git config user.email` to your GitHub no-reply address), then comment
-`recheck`. Contributing for an employer? Ask them to email
-`VoiceStudio@palash.dev` for a corporate agreement first. Adding a
+`recheck`. Contributing as part of your job? Your employer signs the
+[Corporate CLA](CCLA-1.0.md) first, and you still sign the CLA yourself. Adding a
 `Signed-off-by:` line (DCO) is appreciated but does not replace the CLA.
 
 ---
