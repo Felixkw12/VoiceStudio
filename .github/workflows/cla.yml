@@ -1,0 +1,54 @@
+# Contributor License Agreement check.
+#
+# Each PR author signs .github/CLA.md once by commenting on a PR. Signatures are
+# committed to the `cla-signatures` branch, not `main`.
+#
+# Security: pull_request_target runs with a write token on PRs from forks, so
+# this workflow must never check out or execute pull-request code.
+# tests/test_cla_workflow.py enforces that.
+
+name: CLA
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: cla-${{ github.event.pull_request.number || github.event.issue.number }}
+
+jobs:
+  cla:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        github.event.comment.body == 'I have read the VoiceStudio CLA and I hereby sign it.'))
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-document: https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA.md
+          path-to-signatures: signatures/cla.json
+          branch: cla-signatures
+          allowlist: debpalash,*[bot]
+          custom-pr-sign-comment: I have read the VoiceStudio CLA and I hereby sign it.
+          custom-notsigned-prcomment: >-
+            Thank you for contributing to VoiceStudio. Before we can merge this
+            pull request, each commit author must sign our
+            [Contributor License Agreement](https://github.com/debpalash/VoiceStudio/blob/main/.github/CLA.md)
+            once. You keep your copyright; the agreement lets the maintainer
+            ship your work in both the AGPL-3.0 app and commercial builds. To
+            sign, post the comment below.
+          custom-allsigned-prcomment: All commit authors have signed the VoiceStudio CLA.
+          signed-commit-message: "chore(cla): $contributorName signed the CLA in #$pullRequestNo"
+          create-file-commit-message: "chore(cla): create signature store"
