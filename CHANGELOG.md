@@ -115,7 +115,6 @@ metadata and the backend fallback mirror it.
 - Segmented model downloads reject wrong status or `Content-Range` instead of publishing bad bytes (#2451) — thanks @rudycelekli, @ege-arhan!
 - Resume records are trusted only when the partial file matches (#2452) — thanks @rudycelekli!
 - Concurrent migration snapshots no longer overwrite each other and abandoned reservations are pruned (#2453) — thanks @rudycelekli!
-- Storage report counts interrupted sidecar installs and flags unreadable folders (#2479) — thanks @rudycelekli!
 - Exports and downloads named after video titles no longer fail on Windows with `[Errno 22]` (#2376)
 - A full disk during an install stops at once with free-space guidance, and first-run retries the `uv` download on flaky connections (#2496)
 - Deleting a voice profile commits before removing its files (#2483), and history clearing, unlock and consent re-recording no longer delete audio before the change is saved — thanks @rudycelekli!
@@ -141,6 +140,10 @@ metadata and the backend fallback mirror it.
 - IndexTTS 2.5 installs a ROCm PyTorch on ROCm hosts (#2371), verifies bf16 before enabling it (#2372) and avoids a long MIOpen stall (#2373) — thanks @swadhinbiswas!
 - The minimum NVIDIA driver check follows CUDA 12.x compatibility: 525.60.13 on Linux, 528.33 on Windows (#2489) — thanks @NN708!
 - Home keeps every qualifying contributor visible in its avatar rows (#2447) — thanks @nvtoan0201-swe!
+- Keep audiobook chapter boundaries when importing CR-only manuscripts (#2508) — thanks @rudycelekli!
+- Preserve busy sidecars during engine-level unload instead of terminating their active operation (#2507) — thanks @Anuj04432 and @rudycelekli!
+- Exclude downloaded caption comments while preserving spoken metadata words (#2510) — thanks @rudycelekli!
+- Stopping a live Dubbing preview releases its stream and synthesis slot so another render can start (#2511) — thanks @rudycelekli!
 
 - Count interrupted sidecar installs and report unreadable engine scans in Storage usage (#2479) — thanks @rudycelekli!
 - Dub assembly, cached segments and audio tools can read generated WAV files when TorchCodec is missing or cannot load (#2379) — thanks @tokutei58301-boop!
