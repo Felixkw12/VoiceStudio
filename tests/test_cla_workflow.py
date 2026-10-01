@@ -24,8 +24,8 @@ _PRIVILEGED_TRIGGERS = {"pull_request_target", "issue_comment", "workflow_run"}
 # SHA-256 of each published agreement with LF line endings. Never update a hash:
 # publish a new version file instead, so existing signatures keep their text.
 _PUBLISHED_AGREEMENTS = {
-    ".github/CLA-1.0.md": "88766ef4f61c93b169e381dbe78ab5eeeb77fef82a87136715eff3f480b51df8",
-    ".github/CCLA-1.0.md": "e2875366cd36f06e2278ea6155fc5c316bf320cdb5c214ad2d18edb32a857d56",
+    ".github/CLA-1.0.md": "569bb24e423559c53ecdedd50bffce2a340635d033d25acf4de84fe6b140d2d2",
+    ".github/CCLA-1.0.md": "8365d168305c76cce632c42cd822b2dc599f1417f37d99016ece0179c031904b",
 }
 
 

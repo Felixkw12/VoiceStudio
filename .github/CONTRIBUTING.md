@@ -330,8 +330,9 @@ VoiceStudio is **AGPL-3.0-only**, and the maintainer also offers a
 **commercial license** (see [LICENSE-NOTICE.md](../LICENSE-NOTICE.md)). Every
 commit author signs the [Contributor License Agreement](CLA-1.0.md) once before
 their first pull request can merge. You keep your copyright. The agreement
-lets the maintainer ship your work in both the AGPL-3.0 app and commercial
-builds, and commits to keeping it available under an open-source licence.
+lets Yupcha Softwares Private Limited, the company that maintains VoiceStudio,
+ship your work in both the AGPL-3.0 app and commercial builds, and commits to
+keeping it available under an open-source licence.
 
 The **CLA** check comments on your first pull request. To sign, reply with:
 

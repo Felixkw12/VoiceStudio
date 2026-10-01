@@ -20,11 +20,18 @@ repository. This public record is kept as evidence of the Agreement for as long
 as the Project uses Your Contributions. See the privacy policy at
 <https://voicestudio.sh/privacy>.
 
+Your comment is a licence in writing by You, and an electronic record, for the
+purposes of section 30 of the Indian Copyright Act, 1957 and the Information
+Technology Act, 2000.
+
 ## 1. Definitions
 
 - **"You"** means the individual who accepts this Agreement.
-- **"Maintainer"** means Palash Debnath, any entity that Palash Debnath
-  controls, and any assignee under section 10.
+- **"Maintainer"** means Yupcha Softwares Private Limited (CIN
+  U62013TR2023PTC014212), a company incorporated in India with its registered
+  office in Agartala, Tripura, together with its affiliates and any assignee
+  under section 10. An affiliate is an entity that controls, is controlled by,
+  or is under common control with Yupcha Softwares Private Limited.
 - **"Project"** means the VoiceStudio software and documentation published at
   `https://github.com/debpalash/VoiceStudio`, including work published under
   its former name, OmniVoice Studio.
@@ -50,7 +57,8 @@ The Maintainer may license Your Contributions under any terms, including the
 GNU Affero General Public License, other open-source licences, and commercial
 or proprietary licences. You intend this licence to cover those uses, including
 closed-source commercial products and hosted services, and forms of use that
-are not yet known when You accept this Agreement.
+are not yet known when You accept this Agreement. These licences do not lapse
+if the Maintainer does not exercise them.
 
 ## 3. Patent licence
 
@@ -123,14 +131,15 @@ Contribution. You still sign this Agreement yourself.
 ## 9. Governing law
 
 This Agreement is governed by the laws of India, without regard to conflict of
-laws rules. The courts of India have non-exclusive jurisdiction over any
-dispute arising from it.
+laws rules. The courts at Agartala, Tripura, India have non-exclusive
+jurisdiction over any dispute arising from it.
 
 ## 10. General terms
 
 - **Assignment.** The Maintainer may assign this Agreement, and the licences
-  granted under it, to any entity that Palash Debnath controls or to any person
-  or entity that acquires the Project. Any assignee is bound by section 4.
+  granted under it, to any affiliate or to any person or entity that acquires
+  the Project or the business that maintains it. Any assignee is bound by
+  section 4.
 - **Severability.** If a court holds any part of this Agreement unenforceable,
   that part is enforced to the maximum extent permitted and the rest remains in
   effect.

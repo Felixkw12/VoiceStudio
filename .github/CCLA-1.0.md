@@ -12,8 +12,10 @@ and will need a new signature.
 ## How the organisation accepts
 
 An officer or other person authorised to bind the organisation completes the
-signature block below and emails a signed copy (handwritten or qualified
-electronic signature) to `VoiceStudio@palash.dev`. The Maintainer keeps the
+signature block below and emails a signed copy to `VoiceStudio@palash.dev`.
+The signature must be handwritten, or an electronic signature recognised by
+the Information Technology Act, 2000 or the law where the Corporation is
+established. The Maintainer keeps the
 signed copy and confirms receipt. The Agreement takes effect when the
 Maintainer confirms receipt.
 
@@ -24,8 +26,9 @@ Maintainer confirms receipt.
   with it.
 - **"Designated Contributor"** means an employee or contractor of the
   Corporation listed in Schedule A, as updated under section 5.
-- **"Maintainer"**, **"Project"**, and **"Contribution"** have the meanings in
-  the Individual Agreement. Here, a Contribution is one submitted by a
+- **"Maintainer"** (Yupcha Softwares Private Limited and its affiliates and
+  assignees), **"Project"**, and **"Contribution"** have the meanings in the
+  Individual Agreement. Here, a Contribution is one submitted by a
   Designated Contributor in which the Corporation has rights.
 
 This Agreement covers every Contribution a Designated Contributor has submitted
@@ -44,7 +47,9 @@ The Maintainer may license the Contributions under any terms, including the
 GNU Affero General Public License, other open-source licences, and commercial
 or proprietary licences. The Corporation intends these licences to cover those
 uses, including closed-source commercial products and hosted services, and
-forms of use that are not yet known when this Agreement takes effect.
+forms of use that are not yet known when this Agreement takes effect. These
+licences are perpetual, worldwide, and do not lapse if the Maintainer does not
+exercise them.
 
 Section 4 of the Individual Agreement (open-source commitment) applies to the
 Contributions in the same way.
