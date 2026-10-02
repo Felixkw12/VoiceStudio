@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { constants, type BigIntStats } from 'node:fs';
 import { lstat, open, realpath, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 /** Keep a selected existing export intact until all replacement bytes are written. */
 export async function writeExportAtomically(path: string, data: Uint8Array): Promise<void> {
@@ -47,22 +48,31 @@ export async function writeExportAtomically(path: string, data: Uint8Array): Pro
     } finally {
       await file.close();
     }
-    const current = await lstat(destination, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return null;
-      throw error;
-    });
-    if (authorized) {
-      // Refuse observed substitutions instead of copying the selected export
-      // over another inode or following a symlink we did not authorize.
-      if (!current || current.isSymbolicLink() || current.dev !== authorized.dev || current.ino !== authorized.ino) {
-        throw Object.assign(new Error('ESTALE'), { code: 'ESTALE' });
+    for (let attempt = 0; ; attempt += 1) {
+      const current = await lstat(destination, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (authorized) {
+        // Recheck after every wait: another exporter may replace the destination
+        // while a transient Windows sharing violation prevents this rename.
+        if (!current || current.isSymbolicLink() || current.dev !== authorized.dev || current.ino !== authorized.ino) {
+          throw Object.assign(new Error('ESTALE'), { code: 'ESTALE' });
+        }
+      } else if (current) {
+        throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
       }
-    } else if (current) {
-      throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+      // The identity check is not an atomic compare-and-swap with rename. A
+      // concurrently modified hostile directory needs native OS protection.
+      try {
+        await rename(temporary, destination);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt >= 3 || (code !== 'EPERM' && code !== 'EBUSY')) throw error;
+        await delay(50 * (attempt + 1));
+      }
     }
-    // The identity check is not an atomic compare-and-swap with rename. A
-    // concurrently modified hostile directory needs native OS protection.
-    await rename(temporary, destination);
   } finally {
     await rm(temporary, { force: true });
   }

@@ -217,4 +217,4 @@ One session per platform. Ordered by payoff:
   and smoke-tested. Phase F skeleton committed (CI workflow, primary target
   only — non-arm64 rows parked). Phases A, B, D, E pending.
 
-Runtime download byte progress matches complete package identifiers, so concurrent downloads such as `torch` and `torchvision` retain separate received bytes and totals. Unknown package progress does not change another package’s planned size.
+Runtime download byte progress matches complete package identifiers, so concurrent downloads such as `torch` and `torchvision` retain separate received bytes and totals. Package names use the same case-insensitive, hyphen/underscore/dot normalization for planned, active and finished downloads. Unknown package progress does not change another package’s planned size.

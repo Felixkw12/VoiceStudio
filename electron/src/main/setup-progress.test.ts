@@ -74,6 +74,19 @@ describe('SetupProgressTracker', () => {
 
 
 describe('concurrent package byte updates', () => {
+  it('joins equivalent package spellings across planning, progress and completion', () => {
+    const tracker = new SetupProgressTracker();
+    tracker.ingest('Downloading Pydantic_Core (20 MiB)', 0);
+    expect(tracker.ingest('pydantic.core 2 MiB / 20 MiB', 1000)).toMatchObject({
+      totalBytes: 20 * 1024 ** 2,
+      downloadedBytes: 2 * 1024 ** 2,
+    });
+    expect(tracker.ingest('Downloaded PYDANTIC-core', 2000)).toMatchObject({
+      completedDownloads: 1,
+      downloadsComplete: true,
+      downloadedBytes: 20 * 1024 ** 2,
+    });
+  });
   it.each([
     ['torch', 'torchvision'],
     ['torchvision', 'torch'],
@@ -98,7 +111,7 @@ describe('concurrent package byte updates', () => {
     tracker.ingest(`Downloading ${first} (10 MiB)`, 0);
     tracker.ingest(`Downloading ${second} (20 MiB)`, 0);
     expect(tracker.ingest(`${second} 2 MiB / 20 MiB`, 1000)).toMatchObject({
-      activePackage: second,
+      activePackage: second.replace(/[-_.]+/g, '-'),
       totalBytes: 30 * 1024 ** 2,
       downloadedBytes: 2 * 1024 ** 2,
     });

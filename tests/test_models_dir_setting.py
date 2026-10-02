@@ -186,7 +186,7 @@ def test_models_directory_comment_characters_survive_route_and_startup(env, tmp_
         assert user_env.load_into_environ() is True
         assert os.environ["OMNIVOICE_CACHE_DIR"] == target
         assert client.get("/api/settings/storage/models-dir").json()["configured"] == target
-    assert not os.path.exists(target.split(" #", 1)[0])
+    assert os.path.isdir(target)
 
 
 def test_windows_drive_paths_with_spaces_round_trip_verbatim(env):

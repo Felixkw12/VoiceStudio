@@ -1663,6 +1663,16 @@ async def dub_generate(job_id: str, req: DubRequest):
 
         yield f"data: {json.dumps({'type': 'assembling'})}\n\n"
 
+        # Resolve the final text/identity snapshot before publishing hashes or
+        # replacing the previous track. A job may have changed while synthesis
+        # was running; late identity conflicts belong in the task stream.
+        publication = {"segments": job.get("segments"), "seg_order": expected_order}
+        try:
+            _sync_job_segments(publication, req)
+        except HTTPException as exc:
+            yield f"data: {json.dumps({'type': 'error', 'error_code': exc.detail['code'], 'error': exc.detail['message']})}\n\n"
+            return
+
         # ── Batch metadata phase ──────────────────────────────────────
         # Per-segment WAVs were written during the loop to keep RAM bounded.
         # Flush only lightweight fingerprints/quality metadata here.
@@ -2041,9 +2051,11 @@ async def dub_generate(job_id: str, req: DubRequest):
         # mux step needs this to know whether to use the original video as-is
         # or stretch it per the plan.
         track_dur = total_samples / sr if total_samples > 0 else 0.0
-        # Validate synchronized identity/text keys before installing the new
-        # track metadata; a collision must not publish a misleading snapshot.
-        _sync_job_segments(job, req)
+        # Publish the already validated snapshot with the completed track.
+        # Preserve other languages that may have been added during rendering.
+        job["segments"] = publication["segments"]
+        for key in ("segments_i18n", "segments_i18n_cue_sources"):
+            job.setdefault(key, {}).update(publication[key])
         job["dubbed_tracks"][lang_code] = {
             "path": track_path,
             "language": req.language,

@@ -47,7 +47,7 @@ def app_client(tmp_path_factory):
 @pytest.fixture()
 def fake_render(monkeypatch):
     """Stub the design sample renderer — CI has no TTS engine."""
-    async def _fake(a, out_path):
+    async def _fake(a, out_path, **kwargs):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(_FAKE_AUDIO)
 

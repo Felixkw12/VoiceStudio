@@ -409,3 +409,5 @@ Advanced QC keeps the selected track's text and timing fixed while recognition
 runs. If the track, transcript, timing, or audio changes during that pass, QC
 asks you to run it again instead of publishing stale scores. Deleting the job
 during QC also discards the result and keeps it out of history.
+
+Generation revalidates its segment text and identity snapshot after synthesis, before publishing fingerprints or replacing the previous track. An identity collision caused by a concurrent edit is reported through the task stream; the previous track and published metadata remain available.

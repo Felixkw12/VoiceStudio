@@ -1,5 +1,6 @@
 """Track reference paths while longform resolvers can still read them."""
 import os
+import gc
 import threading
 import weakref
 
@@ -29,4 +30,9 @@ class VoiceReferenceSnapshot:
 def references_in_use(paths):
     """Called under voice_file_lock before committing a profile deletion."""
     targets = {os.path.realpath(path) for path in paths}
+    if not any(targets.intersection(snapshot.paths) for snapshot in _snapshots):
+        return False
+    # Finished failed workers can remain in traceback/frame cycles. Collect
+    # unreachable owners before refusing deletion; live workers stay rooted.
+    gc.collect()
     return any(targets.intersection(snapshot.paths) for snapshot in _snapshots)

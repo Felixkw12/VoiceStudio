@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const controls = vi.hoisted(() => ({
   handlers: new Map<string, (event: unknown, request: unknown) => Promise<unknown>>(),
   destination: '', failWrite: false, failRename: false, swapAfterProbeOpen: false, swapWithSymlink: false, appearWhileStaging: false,
+  sharingFailures: 0, renameAttempts: 0, sharingCode: 'EBUSY', swapAfterSharingFailure: false,
 }));
 vi.mock('electron', () => ({
   app: {},
@@ -61,6 +62,15 @@ vi.mock('node:fs/promises', async () => {
       return file;
     },
     rename: async (...args: Parameters<typeof real.rename>) => {
+      controls.renameAttempts += 1;
+      if (controls.sharingFailures-- > 0) {
+        if (controls.swapAfterSharingFailure) {
+          controls.swapAfterSharingFailure = false;
+          await real.rename(controls.destination, join(directory, 'authorized-original.wav'));
+          await real.writeFile(controls.destination, 'concurrent replacement');
+        }
+        throw Object.assign(new Error('export is locked'), { code: controls.sharingCode });
+      }
       if (controls.failRename) throw Object.assign(new Error('injected rename failure'), { code: 'EACCES' });
       return real.rename(...args);
     },
@@ -73,6 +83,7 @@ const owner = { webContents: { mainFrame: frame } };
 const event = { sender: owner.webContents, senderFrame: frame };
 let directory: string;
 beforeEach(async () => {
+  controls.sharingFailures = 0; controls.renameAttempts = 0; controls.sharingCode = 'EBUSY'; controls.swapAfterSharingFailure = false;
   controls.failWrite = false; controls.failRename = false; controls.swapAfterProbeOpen = false; controls.swapWithSymlink = false; controls.appearWhileStaging = false; controls.handlers.clear();
   directory = await mkdtemp(join(tmpdir(), 'voicestudio-export-'));
   controls.destination = join(directory, 'saved.wav');
@@ -97,6 +108,31 @@ it.each(requests)('preserves the old export after a failed replacement in %s', a
   await expect(controls.handlers.get(channel)!(event, request)).rejects.toThrow('rename failure');
   expect(await readFile(controls.destination, 'utf8')).toBe('previous complete export');
   expect(await readdir(directory)).toEqual(['saved.wav']);
+});
+
+it.each(['EBUSY', 'EPERM'])('retries transient %s without exposing partial output', async (code) => {
+  controls.sharingCode = code;
+  controls.sharingFailures = 2;
+  await expect(controls.handlers.get(CHANNELS.filesSaveData)!(event, requests[0][1])).resolves.toMatchObject({ canceled: false });
+  expect(controls.renameAttempts).toBe(3);
+  expect([...await readFile(controls.destination)]).toEqual([9, 8, 7, 6]);
+  expect(await readdir(directory)).toEqual(['saved.wav']);
+});
+
+it('preserves the old export after bounded retries of a persistent sharing lock', async () => {
+  controls.sharingFailures = 100;
+  await expect(controls.handlers.get(CHANNELS.filesSaveData)!(event, requests[0][1])).rejects.toMatchObject({ code: 'EBUSY' });
+  expect(controls.renameAttempts).toBe(4);
+  expect(await readFile(controls.destination, 'utf8')).toBe('previous complete export');
+  expect(await readdir(directory)).toEqual(['saved.wav']);
+});
+
+it('revalidates destination identity before retrying a sharing violation', async () => {
+  controls.sharingFailures = 1;
+  controls.swapAfterSharingFailure = true;
+  await expect(controls.handlers.get(CHANNELS.filesSaveData)!(event, requests[0][1])).rejects.toMatchObject({ code: 'ESTALE' });
+  expect(await readFile(controls.destination, 'utf8')).toBe('concurrent replacement');
+  expect(await readFile(join(directory, 'authorized-original.wav'), 'utf8')).toBe('previous complete export');
 });
 
 it.each(requests)('replaces the complete export and preserves its permissions in %s', async (channel, request) => {

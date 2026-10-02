@@ -204,11 +204,11 @@ async def create_profile(
                         "instruct": instruct,
                     },
                     Path(audio_path),
+                    allow_model_load=False,
                 )
                 audio_filename = f"{profile_id}.wav"
             except Exception:
                 # OOM / inference failure — defer the sample, clearing partials.
-                import logging
                 logging.getLogger("omnivoice.profiles").info(
                     "Design profile %s saved with sample pending — "
                     "voice engine not ready; will render on preview", profile_id,
@@ -616,8 +616,11 @@ async def replace_profile_audio(
                 with contextlib.suppress(OSError):
                     os.remove(leftover)
             raise
-        for column in ("ref_audio_path", "locked_audio_path", "consent_audio_path"):
-            _remove_voice_file(row[column], keep=new_filename)
+        with _voice_file_lock:
+            for column in ("ref_audio_path", "locked_audio_path", "consent_audio_path"):
+                path = _voices_path(row[column]) if row[column] else None
+                if path and not references_in_use([path]):
+                    _remove_voice_file(row[column], keep=new_filename)
     event_bus.emit("profiles", {"action": "updated", "id": profile_id})
     return _profile_record(updated)
 
@@ -1027,9 +1030,12 @@ def _delete_profile(profile_id: str):
                     if path:
                         paths.append(path)
         if row:
-            # Relocking retains immutable versions for already-admitted renders.
-            # Explicit deletion reclaims only this profile's generated names.
-            versions = re.compile(re.escape(profile_id) + r"_locked(?:_[0-9a-f]{32})?\.wav")
+            # Relocking/replacement retains versions for admitted renders.
+            # Reclaim this profile's generated reference/locked/consent names,
+            # including a first upload with no filename extension.
+            versions = re.compile(re.escape(profile_id) +
+                r"(?:_locked(?:_[0-9a-f]{32})?\.wav|_consent\.[^./\\]+|"
+                r"(?:-[0-9a-f]{8})?(?:\.[^./\\]+)?)")
             if os.path.isdir(VOICES_DIR):
                 for filename in os.listdir(VOICES_DIR):
                     if versions.fullmatch(filename):

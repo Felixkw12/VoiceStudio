@@ -125,7 +125,8 @@ def test_warm_design_save_preserves_identity_sample(iso, monkeypatch):
     monkeypatch.setattr(model_manager, "get_model_status", lambda: {"loaded": True})
     renders = []
 
-    async def render(recipe, out_path):
+    async def render(recipe, out_path, *, allow_model_load):
+        assert allow_model_load is False
         renders.append(recipe)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(b"identity sample")
@@ -140,6 +141,49 @@ def test_warm_design_save_preserves_identity_sample(iso, monkeypatch):
     with db.db_conn() as conn:
         row = conn.execute("SELECT ref_audio_path FROM voice_profiles WHERE id=?", (result["id"],)).fetchone()
     assert (Path(cfg.VOICES_DIR) / row["ref_audio_path"]).read_bytes() == b"identity sample"
+
+
+@pytest.mark.parametrize("on_gpu_worker", [False, True])
+def test_design_save_cannot_cold_load_after_residency_check(iso, monkeypatch, on_gpu_worker):
+    """ASR/idle unload between admission and rendering must keep save local."""
+    _, db, prof = iso
+    from api.routers import archetypes, generation
+    from services import model_manager
+    monkeypatch.setattr(model_manager, "model", object())
+    monkeypatch.setattr(model_manager, "get_model_status", lambda: {"loaded": True})
+    monkeypatch.setattr(model_manager, "running_on_gpu_pool", lambda: on_gpu_worker)
+    monkeypatch.setattr(generation, "get_model", model_manager.get_model)
+    real_render = archetypes._render_archetype_wav
+    loads = []
+
+    async def blocked_load():
+        loads.append(True)
+        await asyncio.Event().wait()
+
+    def inline_load():
+        loads.append(True)
+        raise RuntimeError("Unexpected cold load on GPU worker")
+
+    async def unload_then_render(*args, **kwargs):
+        model_manager.model = None
+        return await real_render(*args, **kwargs)
+
+    monkeypatch.setattr(model_manager, "_load_model_with_timeout", blocked_load)
+    monkeypatch.setattr(model_manager, "_load_model_exclusive", inline_load)
+    monkeypatch.setattr(archetypes, "_render_archetype_wav", unload_then_render)
+
+    async def save():
+        return await asyncio.wait_for(prof.create_profile(
+            name="Unloaded during save", ref_audio=None, ref_text="", instruct="female",
+            language="English", seed=None, personality="", kind="design",
+            vd_states=json.dumps(_VD), image=None,
+        ), timeout=1)
+
+    result = asyncio.run(save())
+    assert not loads
+    with db.db_conn() as conn:
+        row = conn.execute("SELECT ref_audio_path FROM voice_profiles WHERE id=?", (result["id"],)).fetchone()
+    assert row is not None and not row["ref_audio_path"]
 
 
 def test_all_auto_design_is_saveable(iso, monkeypatch):

@@ -362,3 +362,35 @@ def test_failed_unlock_preserves_locked_reference_and_row(profile):
     with db.db_conn() as conn:
         row = conn.execute("SELECT is_locked,locked_audio_path FROM voice_profiles WHERE id='voice'").fetchone()
         assert tuple(row) == (1, locked)
+
+
+def test_finished_failed_render_does_not_keep_profile_busy_until_automatic_gc(profile):
+    import gc
+    from api.routers.audiobook import _build_synth
+
+    client, _db, voices = profile
+    locked = client.post('/profiles/voice/lock', data={'history_id': 'first'}).json()['locked_audio_path']
+
+    def failed_chapter():
+        # Like _render_longform_sse's last_chapter_exc: the exception owns its
+        # frame, which owns both the exception and the now-finished resolver.
+        running = _build_synth(default_voice='voice')
+        running['resolve']('voice')
+        last_chapter_exc = None
+        try:
+            raise RuntimeError('completed chapter failure')
+        except RuntimeError as error:
+            last_chapter_exc = error
+        assert last_chapter_exc is not None
+
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        failed_chapter()
+        response = client.delete('/profiles/voice')
+        assert response.status_code == 200, response.text
+        assert not Path(voices, locked).exists()
+    finally:
+        if enabled:
+            gc.enable()
+        gc.collect()

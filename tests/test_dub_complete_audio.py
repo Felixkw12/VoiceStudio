@@ -208,3 +208,38 @@ def test_timing_trims_edge_silence_but_keeps_internal_pauses():
     result = trim_speech_padding(wav, 1000)
     assert result.shape[-1] == 700
     assert torch.equal(result[..., 250:450], torch.zeros(1,200))
+
+
+def test_identity_change_during_render_preserves_previous_publication(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+
+    previous = render_dub.path / 'dubbed_en.wav'
+    previous.write_bytes(b'previous complete track')
+    render_dub.job.update({
+        'segments': [{'id': 'a', 'start': 0, 'end': 1, 'text': 'saved first'},
+                     {'id': 'b', 'start': 1, 'end': 2, 'text': 'saved second'}],
+        'segments_i18n': {'en': {'a': 'saved first', 'b': 'saved second'}},
+        'seg_hashes': {'a': 'saved hash'},
+        'seg_hashes_by_lang': {'en': {'a': 'saved hash'}},
+        'dubbed_tracks': {'en': {'path': str(previous)}},
+    })
+    saved = copy.deepcopy(render_dub.job)
+    persisted = render_dub.path / 'job.json'
+    persisted.write_text(json.dumps(saved))
+    monkeypatch.setattr(dg, '_save_job', lambda _, job: persisted.write_text(json.dumps(job)))
+
+    def change_identity():
+        render_dub.job['segments'][0]['id'] = 'duplicate'
+        render_dub.job['segments'][1]['id'] = 'duplicate'
+        return torch.ones(1, 24000) * .1
+    render_dub.output[0] = change_identity
+    events = render_dub.run(segments=[dict(start=0, end=1, text='replacement first'),
+                                      dict(start=1, end=2, text='replacement second')],
+                            segment_ids=[])
+    assert any(e['type'] == 'error' and e.get('error_code') == 'dub_segment_identity_conflict'
+               for e in events)
+    assert not any(e['type'] == 'done' for e in events)
+    assert previous.read_bytes() == b'previous complete track'
+    assert json.loads(persisted.read_text()) == saved
+    for key in ('seg_hashes', 'seg_hashes_by_lang', 'segments_i18n', 'dubbed_tracks'):
+        assert render_dub.job[key] == saved[key]

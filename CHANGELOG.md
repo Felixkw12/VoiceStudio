@@ -88,7 +88,7 @@ metadata and the backend fallback mirror it.
 
 ### Fixed
 
-- Saving a voice design skips cold engine loading and downloads (#2583) — thanks @simoncheese!
+- Saving a voice design skips cold engine loading and downloads, including when a warm engine unloads during the save (#2583) — thanks @simoncheese!
 
 - Electron streaming previews drain the final PCM chunk and crossfade recovered chunks only while audio overlaps (#2518) — thanks @rudycelekli!
 - Allow application-data relocation into existing empty folders without removing files added during copying (#2521) — thanks @rudycelekli!
@@ -99,7 +99,7 @@ metadata and the backend fallback mirror it.
 - Preserve CRLF and CR metadata paragraphs in longform audio exports (#2528) — thanks @rudycelekli!
 - Cancelled dictation starts cannot replace the next session after a delayed connection ticket arrives (#2533) — thanks @rudycelekli!
 - Electron remote WebSockets retain the selected backend path prefix and path-bound tickets (#2537) — thanks @rudycelekli!
-- Refresh longform audio after locking a voice to another take (#2535) — thanks @rudycelekli!
+- Refresh longform audio after changing a voice reference and keep prior clips usable until active renders finish (#2535) — thanks @rudycelekli!
 - Retire cancelled longform streams and failed setup jobs while preserving resume checkpoints (#2536) — thanks @rudycelekli!
 - Buffered dictation utterances receive distinct saved-history IDs so deleting one preserves the others (#2538) — thanks @rudycelekli!
 - Compare voices warns when a generated preview omits speech, while keeping the surviving audio playable (#2548) — thanks @rudycelekli!
@@ -107,8 +107,8 @@ metadata and the backend fallback mirror it.
 - Keep batch retries and deletion from racing over active job files (#2547) — thanks @rudycelekli!
 - Dictionary backups preserve duplicate-entry pronunciation order across preview, synthesis and restore (#2552) — thanks @rudycelekli!
 - Gallery trimming no longer stalls waiting for audio metadata before decoding (#2558) — thanks @rudycelekli!
-- Native exports preserve existing files when a replacement write fails (#2560) — thanks @rudycelekli!
-- Runtime setup keeps concurrent package download progress separate (#2562) — thanks @rudycelekli!
+- Native exports preserve existing files when a replacement write fails and retry temporary file locks (#2560) — thanks @rudycelekli!
+- Runtime setup keeps concurrent package download progress separate across equivalent package spellings (#2562) — thanks @rudycelekli!
 - Honor storage scan budgets in large flat directories (#2564) — thanks @rudycelekli!
 - Clean visual-context frame directories after worker completion (#2566) — thanks @rudycelekli!
 - Preserve concurrent partial MCP binding edits (#2568) — thanks @rudycelekli!
