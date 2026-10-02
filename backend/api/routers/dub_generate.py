@@ -210,6 +210,16 @@ GAP_OVERFLOW_MAX_S = 0.25
 GAP_OVERFLOW_BUFFER_S = 0.05
 
 
+def _render_source_segments(job: dict):
+    """Snapshot source edits without treating derived QC annotations as edits."""
+    segments = job.get("segments")
+    if segments is None:
+        return None
+    return [{key: copy.deepcopy(value) for key, value in row.items()
+             if not key.startswith("qc_")} if isinstance(row, dict) else copy.deepcopy(row)
+            for row in segments]
+
+
 def _track_source_segments(job: dict) -> list[dict]:
     """Snapshot source times by the identities persisted for this render."""
     return [{"id": seg.get("id"), "start": seg["start"], "end": seg["end"]}
@@ -625,7 +635,7 @@ async def dub_generate(job_id: str, req: DubRequest):
 
     # Subtitle imports can replace the source while synthesis or fitting awaits.
     # Keep the admission snapshot so publishing cannot overwrite those edits.
-    source_segments = copy.deepcopy(job.get("segments"))
+    source_segments = _render_source_segments(job)
 
     # ── Engine resolution (issue #312 class) ────────────────────────────────
     # Every rendered segment clones either source speech or a saved profile, so
@@ -2021,7 +2031,7 @@ async def dub_generate(job_id: str, req: DubRequest):
 
             # No await separates this final check from track/metadata publication.
             # In particular, a subtitle import during asynchronous fitting wins.
-            if _get_job(job_id) is not job or job.get("segments") != source_segments:
+            if _get_job(job_id) is not job or _render_source_segments(job) != source_segments:
                 yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"
                 return
             _t_save_0 = time.perf_counter()
@@ -2062,7 +2072,7 @@ async def dub_generate(job_id: str, req: DubRequest):
         track_dur = total_samples / sr if total_samples > 0 else 0.0
         def publish():
             with dub_pipeline._dub_jobs_lock:
-                if _get_job(job_id) is not job or job.get("segments") != source_segments:
+                if _get_job(job_id) is not job or _render_source_segments(job) != source_segments:
                     return False
                 published_job = copy.deepcopy(job)
                 artifacts = {**staged_segments, track_path: staged_track}
@@ -2093,9 +2103,9 @@ async def dub_generate(job_id: str, req: DubRequest):
                     published_job["seg_order"] = list(expected_order)
                     # Publish the already validated snapshot with the completed track.
                     # Preserve other languages that may have been added during rendering.
-                    published_job["segments"] = publication["segments"]
-                    for key in ("segments_i18n", "segments_i18n_cue_sources"):
-                        published_job.setdefault(key, {}).update(publication[key])
+                    # Rebuild from the current snapshot under the lock so QC
+                    # annotations completed during assembly are not overwritten.
+                    _sync_job_segments(published_job, req)
                     published_job["dubbed_tracks"][lang_code] = {
                         "path": track_path,
                         "language": req.language,

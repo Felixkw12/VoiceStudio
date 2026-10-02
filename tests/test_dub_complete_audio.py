@@ -358,3 +358,21 @@ def test_cancelled_render_discards_staged_cache(render_dub, monkeypatch):
     assert cache.read_bytes() == cache_bytes
     assert not (render_dub.path / 'seg_en_b.wav').exists()
     assert not list(render_dub.path.glob('.render-*'))
+
+
+def test_qc_annotations_during_assembly_do_not_discard_render(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+
+    render_dub.job['segments'] = [{'id': 'a', 'start': 0, 'end': 1, 'text': 'original'}]
+    async def stretch(wav, target, sr):
+        render_dub.job['segments'][0].update(qc_drift=0.2, qc_flagged=True,
+                                            qc_recognized='measured speech',
+                                            qc_measured_start=0.1, qc_measured_end=0.9)
+        return torch.nn.functional.interpolate(wav.unsqueeze(0), size=target, mode='linear').squeeze(0)
+    monkeypatch.setattr(dg, '_pitch_preserving_stretch', stretch)
+    render_dub.output[0] = lambda: torch.ones(1, 48000) * .1
+    events = render_dub.run(timing_strategy='strict_slot')
+    assert any(e['type'] == 'done' for e in events)
+    assert not any(e.get('error_code') == 'dub_source_changed' for e in events)
+    assert render_dub.job['segments'][0]['qc_recognized'] == 'measured speech'
+    assert render_dub.job['segments'][0]['text'] == 'hello'
