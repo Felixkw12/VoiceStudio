@@ -320,6 +320,8 @@ def test_failed_publication_restores_track_and_segment_cache(render_dub, monkeyp
     sf.write(cache, [.2] * 24000, 24000)
     cache_bytes = cache.read_bytes()
     render_dub.job['dubbed_tracks']['en'] = {'path': str(previous)}
+    render_dub.job['segments'] = [{'id': 'a', 'start': 0, 'end': 1, 'text': 'old speech',
+                                   'qc_flagged': True, 'qc_recognized': 'old speech'}]
     original = copy.deepcopy(render_dub.job)
     if failure == 'install':
         replace = dg.os.replace
@@ -374,5 +376,5 @@ def test_qc_annotations_during_assembly_do_not_discard_render(render_dub, monkey
     events = render_dub.run(timing_strategy='strict_slot')
     assert any(e['type'] == 'done' for e in events)
     assert not any(e.get('error_code') == 'dub_source_changed' for e in events)
-    assert render_dub.job['segments'][0]['qc_recognized'] == 'measured speech'
+    assert not any(key.startswith('qc_') for key in render_dub.job['segments'][0])
     assert render_dub.job['segments'][0]['text'] == 'hello'

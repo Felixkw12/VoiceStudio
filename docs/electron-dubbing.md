@@ -413,7 +413,8 @@ during QC also discards the result and keeps it out of history.
 Generation revalidates its segment text and identity snapshot after synthesis, before publishing fingerprints or replacing the previous track. An identity collision caused by a concurrent edit is reported through the task stream; the previous track and published metadata remain available. The source snapshot is checked again after asynchronous fitting and before replacing audio: subtitle imports made during generation or assembly survive, and the user can regenerate from the corrected subtitles. Fresh segment WAVs and the assembled track stay in a private staging directory until this check passes. Rejection or cancellation removes the staging files and preserves the reusable segment cache. Publication backs up existing files and rolls back ordinary installation failures; it does not promise a multi-file transaction across power loss. Fingerprints and the segment manifest publish only with a completed track. Empty generation requests are rejected before loading a voice engine.
 
 QC annotations arriving during generation do not count as source edits: a completed
-render can publish while retaining those annotations. Source text, timing, identity,
+render can still publish. Publishing replacement audio clears QC annotations measured
+against the old audio; a failed publication retains the old track and its QC. Source text, timing, identity,
 voice bindings, and imported-cue changes still invalidate the admitted snapshot.
 
 Cancelling or failing a render preserves the previous committed track and its

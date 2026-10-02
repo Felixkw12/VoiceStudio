@@ -2103,9 +2103,11 @@ async def dub_generate(job_id: str, req: DubRequest):
                     published_job["seg_order"] = list(expected_order)
                     # Publish the already validated snapshot with the completed track.
                     # Preserve other languages that may have been added during rendering.
-                    # Rebuild from the current snapshot under the lock so QC
-                    # annotations completed during assembly are not overwritten.
+                    # Rebuild from the current snapshot under the lock, but clear
+                    # QC measurements of the audio being replaced. A failed
+                    # publication retains the original job and its valid QC.
                     _sync_job_segments(published_job, req)
+                    published_job["segments"] = _render_source_segments(published_job)
                     published_job["dubbed_tracks"][lang_code] = {
                         "path": track_path,
                         "language": req.language,
