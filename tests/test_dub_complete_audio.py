@@ -223,6 +223,10 @@ def test_identity_change_during_render_preserves_previous_publication(render_dub
         'seg_hashes_by_lang': {'en': {'a': 'saved hash'}},
         'dubbed_tracks': {'en': {'path': str(previous)}},
     })
+    cached = [render_dub.path / f'seg_en_seg_{i}.wav' for i in range(2)]
+    for cache in cached:
+        sf.write(cache, [.2] * 24000, 24000)
+    cached_bytes = [cache.read_bytes() for cache in cached]
     saved = copy.deepcopy(render_dub.job)
     persisted = render_dub.path / 'job.json'
     persisted.write_text(json.dumps(saved))
@@ -239,7 +243,118 @@ def test_identity_change_during_render_preserves_previous_publication(render_dub
     assert any(e['type'] == 'error' and e.get('error_code') == 'dub_segment_identity_conflict'
                for e in events)
     assert not any(e['type'] == 'done' for e in events)
+    assert [cache.read_bytes() for cache in cached] == cached_bytes
+    assert not list(render_dub.path.glob('.render-*'))
     assert previous.read_bytes() == b'previous complete track'
     assert json.loads(persisted.read_text()) == saved
     for key in ('seg_hashes', 'seg_hashes_by_lang', 'segments_i18n', 'dubbed_tracks'):
         assert render_dub.job[key] == saved[key]
+
+
+def test_subtitle_import_during_assembly_keeps_edits_and_previous_track(render_dub, monkeypatch):
+    import io
+    from fastapi import UploadFile
+    from api.routers import dub_core, dub_generate as dg
+
+    previous = render_dub.path / 'dubbed_en.wav'
+    previous.write_bytes(b'previous complete track')
+    render_dub.job.update({
+        'segments': [{'id': 'a', 'start': 0, 'end': 1, 'text': 'saved text'}],
+        'seg_order': ['a'],
+        'seg_hashes': {'a': 'saved hash'},
+        'seg_hashes_by_lang': {'en': {'a': 'saved hash'}},
+        'dubbed_tracks': {'en': {'path': str(previous)}},
+    })
+    saved_hashes = copy.deepcopy(render_dub.job['seg_hashes_by_lang'])
+    persisted = render_dub.path / 'job.json'
+    def persist(_, job):
+        persisted.write_text(json.dumps(job))
+    persist('job', render_dub.job)
+    monkeypatch.setattr(dg, '_save_job', persist)
+    monkeypatch.setattr(dub_core, '_save_job', persist)
+    monkeypatch.setattr(dub_core, '_get_job', lambda _: render_dub.job)
+    imported = []
+    async def stretch(wav, target, sr):
+        result = await dub_core.dub_import_srt('job', UploadFile(
+            filename='corrected.srt',
+            file=io.BytesIO(b'1\n00:00:00,000 --> 00:00:01,000\nCorrected subtitle\n'),
+        ))
+        imported.extend(copy.deepcopy(result['segments']))
+        return torch.nn.functional.interpolate(wav.unsqueeze(0), size=target, mode='linear').squeeze(0)
+    monkeypatch.setattr(dg, '_pitch_preserving_stretch', stretch)
+    render_dub.output[0] = lambda: torch.ones(1, 48000) * .1
+    events = render_dub.run(timing_strategy='strict_slot')
+    assert imported
+    assert any(e['type'] == 'error' and e.get('error_code') == 'dub_source_changed' for e in events)
+    assert not any(e['type'] == 'done' for e in events)
+    assert render_dub.job['segments'] == imported
+    assert render_dub.job['seg_hashes_by_lang'] == saved_hashes
+    assert previous.read_bytes() == b'previous complete track'
+    assert json.loads(persisted.read_text()) == render_dub.job
+
+
+def test_empty_dub_request_rejected_before_backend_resolution(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api.routers import dub_generate as dg
+
+    async def forbidden():
+        pytest.fail('Empty requests must not load the synthesis backend')
+    monkeypatch.setattr(dg, '_resolve_dub_execution', forbidden)
+    monkeypatch.setattr(dg, '_get_job', lambda _: {'segments': []})
+    app = FastAPI()
+    app.include_router(dg.router)
+    with TestClient(app) as client:
+        response = client.post('/dub/generate/job', json={'segments': []})
+    assert response.status_code == 422
+    assert any(error['loc'] == ['body', 'segments'] for error in response.json()['detail'])
+
+
+@pytest.mark.parametrize('failure', ['install', 'persist'])
+def test_failed_publication_restores_track_and_segment_cache(render_dub, monkeypatch, failure):
+    from api.routers import dub_generate as dg
+
+    previous = render_dub.path / 'dubbed_en.wav'
+    previous.write_bytes(b'previous complete track')
+    cache = render_dub.path / 'seg_en_a.wav'
+    sf.write(cache, [.2] * 24000, 24000)
+    cache_bytes = cache.read_bytes()
+    render_dub.job['dubbed_tracks']['en'] = {'path': str(previous)}
+    original = copy.deepcopy(render_dub.job)
+    if failure == 'install':
+        replace = dg.os.replace
+        def fail_track_install(source, destination):
+            if str(destination) == str(previous):
+                raise OSError('injected track installation failure')
+            return replace(source, destination)
+        monkeypatch.setattr(dg.os, 'replace', fail_track_install)
+    else:
+        def fail_save(*_):
+            raise OSError('injected persistence failure')
+        monkeypatch.setattr(dg, '_save_job', fail_save)
+    events = render_dub.run()
+    assert any(e['type'] == 'error' for e in events)
+    assert not any(e['type'] == 'done' for e in events)
+    assert previous.read_bytes() == b'previous complete track'
+    assert cache.read_bytes() == cache_bytes
+    assert render_dub.job == original
+    assert not list(render_dub.path.glob('.render-*'))
+
+
+def test_cancelled_render_discards_staged_cache(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+
+    cache = render_dub.path / 'seg_en_a.wav'
+    sf.write(cache, [.2] * 24000, 24000)
+    cache_bytes = cache.read_bytes()
+    calls = []
+    def cancelled(_):
+        calls.append(True)
+        return len(calls) >= 3  # after the first segment, before the second
+    monkeypatch.setattr(dg.task_manager, 'is_cancelled', cancelled)
+    events = render_dub.run(segments=[dict(start=0, end=1, text='first'),
+                                      dict(start=1, end=2, text='second')], segment_ids=['a', 'b'])
+    assert any(e['type'] == 'cancelled' for e in events)
+    assert cache.read_bytes() == cache_bytes
+    assert not (render_dub.path / 'seg_en_b.wav').exists()
+    assert not list(render_dub.path.glob('.render-*'))

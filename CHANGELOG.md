@@ -114,7 +114,7 @@ metadata and the backend fallback mirror it.
 - Preserve concurrent partial MCP binding edits (#2568) — thanks @rudycelekli!
 - Preserve CPU forced-alignment fallback when loading the MPS aligner fails (#2570) — thanks @rudycelekli!
 - Keep untimed transcript segments alongside precise word-timed speech (#2572) — thanks @rudycelekli!
-- Score dub quality against the selected track’s saved language text, reject stale checks, and preserve audio when segment identities conflict (#2574) — thanks @rudycelekli!
+- Score dub quality against the selected track’s saved language text, reject stale checks, and preserve audio and subtitle edits when generation conflicts (#2574) — thanks @rudycelekli!
 - Accept Japanese Han letters in translation and refinement script checks (#2576) — thanks @rudycelekli!
 - Keep audiobook chapter boundaries when importing CR-only manuscripts (#2508) — thanks @rudycelekli!
 - Preserve busy sidecars during engine-level unload instead of terminating their active operation (#2507) — thanks @Anuj04432 and @rudycelekli!

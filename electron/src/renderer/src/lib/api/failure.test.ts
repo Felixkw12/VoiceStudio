@@ -14,3 +14,12 @@ it('localizes a segment identity conflict delivered after generation starts', ()
   expect(failure.reason).toBe('Localized identity conflict');
   expect(translate).toHaveBeenCalledWith('dub.qc_identity_missing');
 });
+
+it('localizes a source edit that interrupts dub publication', () => {
+  const translate = vi.spyOn(i18next, 't').mockReturnValue('Localized subtitle change');
+  const failure = publicFailureFromEvent({
+    type: 'error', error_code: 'dub_source_changed', error: 'Server fallback',
+  }, 'Task failed');
+  expect(failure.reason).toBe('Localized subtitle change');
+  expect(translate).toHaveBeenCalledWith('dub.source_changed');
+});

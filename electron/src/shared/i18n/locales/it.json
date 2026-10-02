@@ -1327,6 +1327,7 @@
     "qc_failed": "Controllo cronometraggio fallito: {{message}}",
     "qc_track_changed": "Il doppiaggio è cambiato durante il controllo qualità. Ripeti il controllo sulla traccia attuale.",
     "qc_identity_missing": "Le identità dei segmenti sono ambigue. Rigenera questa traccia con identificativi di segmento univoci.",
+    "source_changed": "I sottotitoli sono cambiati durante la generazione. Genera di nuovo per usare i sottotitoli attuali.",
     "paste_translation_btn": "Incolla traduzione",
     "paste_translation_title": "Incolla una traduzione",
     "paste_translation_desc": "Incolla una traduzione prodotta altrove (ChatGPT, DeepL, un traduttore umano). Viene mappata sui segmenti che hai già: tempi e trascrizione originale restano invariati.",

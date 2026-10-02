@@ -1542,6 +1542,7 @@
     "qc_failed": "Timing check failed: {{message}}",
     "qc_track_changed": "The dub changed during the quality check. Run the check again on the current track.",
     "qc_identity_missing": "Segment identities are ambiguous. Regenerate this track with unique segment IDs.",
+    "source_changed": "Subtitles changed during generation. Generate again to use the current subtitles.",
     "export_btn": "Export…",
     "prep_stop": "Stop",
     "install_progress": "Installing {{engine}}…",

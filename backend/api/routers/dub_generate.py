@@ -5,10 +5,15 @@ import struct
 import logging
 import time
 import asyncio
+import copy
+import contextlib
+import shutil
+import tempfile
 import torch
 from fastapi import APIRouter, HTTPException
 
 from core.db import db_conn
+from core.logging_utils import log_safe
 from core.config import DUB_DIR, VOICES_DIR, dub_seg_path
 from core.tasks import task_manager
 from schemas.requests import DubRequest
@@ -16,7 +21,7 @@ from services.model_manager import _gpu_pool, run_on_gpu_pool_guarded
 from services.srt_parser import vouch_cue_source
 from services.tts_backend import TTSBackend, resolve_generation_backend, active_backend_id
 from services.dub_batching import batch_timeout_s, native_batch_width
-from services import gpu_gateway
+from services import gpu_gateway, dub_pipeline
 from services.audio_dsp import apply_mastering, normalize_audio, apply_effects_chain, get_effect_chain
 from services.audio_io import atomic_save_wav, audio_info, _safe_torchaudio_save
 from services.ffmpeg_utils import (
@@ -38,6 +43,41 @@ from api.routers.dub_core import _get_job, _save_job
 from omnivoice.utils.voice_design import heal_design_instruct
 
 logger = logging.getLogger("omnivoice.dub")
+
+@contextlib.contextmanager
+def _install_dub_artifacts(staged: dict[str, str]):
+    """Install a render's WAVs together, rolling back ordinary commit failures.
+
+    Paths are on the same filesystem. Hard-link backups avoid duplicating long
+    tracks where supported; copying is the portable fallback. This is rollback
+    for a failed publication, not a multi-file power-loss transaction.
+    """
+    backups = {}
+    installed = []
+    try:
+        for destination, source in staged.items():
+            backup = source + ".previous"
+            if os.path.exists(destination):
+                try:
+                    os.link(destination, backup)
+                except OSError:
+                    shutil.copy2(destination, backup)
+                backups[destination] = backup
+            else:
+                backups[destination] = None
+        for destination, source in staged.items():
+            os.replace(source, destination)
+            installed.append(destination)
+        yield
+    except BaseException:
+        for destination in reversed(installed):
+            backup = backups[destination]
+            if backup is not None:
+                os.replace(backup, destination)
+            else:
+                os.unlink(destination)
+        raise
+
 
 class _RemoteDubBackend:
     """Sample-rate carrier while Dubbing runs without local TTS weights."""
@@ -200,7 +240,7 @@ def _sync_job_segments(job: dict, req: DubRequest) -> None:
     # by a later row. Those stable-ID matches take priority over index fallback.
     reserved_existing = {by_id[str(sid)] for sid in seg_ids
                          if sid is not None and str(sid) in by_id}
-    # The current render seeds exactly this manifest before synthesis. Only a
+    # The current render supplies exactly this manifest in its projection. Only a
     # complete matching vector can supply an otherwise missing row identity.
     render_order = job.get("seg_order")
     expected_order = [seg_ids[i] if i < len(seg_ids) else f"seg_{i}"
@@ -583,6 +623,10 @@ async def dub_generate(job_id: str, req: DubRequest):
         "seg_order": expected_order,
     }, req)
 
+    # Subtitle imports can replace the source while synthesis or fitting awaits.
+    # Keep the admission snapshot so publishing cannot overwrite those edits.
+    source_segments = copy.deepcopy(job.get("segments"))
+
     # ── Engine resolution (issue #312 class) ────────────────────────────────
     # Every rendered segment clones either source speech or a saved profile, so
     # local execution still requires a cloning-capable engine. Remote execution
@@ -626,7 +670,7 @@ async def dub_generate(job_id: str, req: DubRequest):
     _job_num_step = req.num_step if req.num_step is not None else _profile_defaults.get("num_step", 16)
     _job_postprocess = _profile_defaults.get("postprocess_output", True)
 
-    async def _stream(task_id):
+    async def _render_stream(task_id, staging_dir):
         total = len(req.segments)
         all_segment_wavs = []
         sync_scores = []
@@ -642,6 +686,14 @@ async def dub_generate(job_id: str, req: DubRequest):
             # apply to the combined key. Legacy un-keyed seg_{id}.wav files
             # remain readable via the gated fallback (_legacy_seg_cache_ok).
             return dub_seg_path(job_id, f"{lang_code}_{seg_key}")
+
+        staged_segments = {}
+
+        def _staged_segment_path(seg_key) -> str:
+            destination = _seg_lang_path(seg_key)
+            source = os.path.join(staging_dir, os.path.basename(destination))
+            staged_segments[destination] = source
+            return source
 
         # Throttle the device cache flush. empty_cache() is a synchronous
         # device stall, so calling it every segment (as the old code did)
@@ -684,7 +736,7 @@ async def dub_generate(job_id: str, req: DubRequest):
             """
             if wav.shape[-1] <= 0:
                 return (start, end, torch.zeros(1, 0), sr)
-            path = dub_seg_path(job_id, seg_key)
+            path = os.path.join(staging_dir, os.path.basename(dub_seg_path(job_id, seg_key)))
             os.makedirs(os.path.dirname(path), exist_ok=True)
             atomic_save_wav(path, wav.detach().cpu(), sr)
             if seg_key.startswith("mix_"):
@@ -725,7 +777,6 @@ async def dub_generate(job_id: str, req: DubRequest):
             time (see the seg-write path below), exactly as ``main`` does.
             Re-marking here would double-mark every segment in the final mix.
             """
-            import tempfile
             import wave
             import numpy as np
 
@@ -811,10 +862,8 @@ async def dub_generate(job_id: str, req: DubRequest):
                 if not intact:
                     regen_only.add(sid)
         _validate_render_languages(backend, req, seg_ids, regen_only)
-        # Manifest: stable segment id per current index. Per-segment WAVs are
-        # named by stable id (dub_seg_path) so regen reuses the right audio after
-        # reorder; index-keyed readers (preview/export) resolve via this manifest.
-        job["seg_order"] = list(expected_order)
+        # Keep the new manifest private until the track is complete. Assembly
+        # uses expected_order; preview/export retain the previous successful one.
 
         # Per-segment metadata to persist after the hot loop. Audio itself is
         # written immediately and only file paths are kept, so long videos don't
@@ -1600,7 +1649,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                 # RVC needs the WAV on disk, so write it immediately only
                 # when RVC is active (uncommon path).
                 if rvc_is_enabled():
-                    seg_wav_path = _seg_lang_path(seg_id)
+                    seg_wav_path = _staged_segment_path(seg_id)
                     atomic_save_wav(seg_wav_path, audio_tensor, backend.sample_rate)
                     try:
                         await loop.run_in_executor(_gpu_pool, apply_rvc, seg_wav_path)
@@ -1624,28 +1673,11 @@ async def dub_generate(job_id: str, req: DubRequest):
                     audio_tensor = mark_synthetic(audio_tensor, backend.sample_rate,
                                                   context="dub_generate.segment")
 
-                seg_wav_path = _seg_lang_path(seg_id)
-                try:
-                    # Keep the existing per-segment WAV contract for previews
-                    # and partial regeneration, but do not keep the tensor in RAM.
-                    atomic_save_wav(seg_wav_path, audio_tensor, backend.sample_rate)
-                except Exception as e:
-                    logger.warning("seg write failed for %s: %s", seg_id, e)
-                    # If the durable segment write fails, still preserve a mix
-                    # copy so this generation can finish.
-                    all_segment_wavs.append(_store_mix_wav(seg.start, seg.end, audio_tensor, backend.sample_rate, f"mix_{seg_id}"))
-                    try:
-                        del audio_tensor
-                    except Exception:
-                        pass
-                    _release_audio_tensors()
-                else:
-                    all_segment_wavs.append((seg.start, seg.end, seg_wav_path, backend.sample_rate))
-                    try:
-                        del audio_tensor
-                    except Exception:
-                        pass
-                    _release_audio_tensors()
+                seg_wav_path = _staged_segment_path(seg_id)
+                atomic_save_wav(seg_wav_path, audio_tensor, backend.sample_rate)
+                all_segment_wavs.append((seg.start, seg.end, seg_wav_path, backend.sample_rate))
+                del audio_tensor
+                _release_audio_tensors()
             except Exception as e:
                 # A task-stream error bypasses the global exception handler.
                 # Never publish engine exception text here: allocator errors
@@ -1672,34 +1704,6 @@ async def dub_generate(job_id: str, req: DubRequest):
         except HTTPException as exc:
             yield f"data: {json.dumps({'type': 'error', 'error_code': exc.detail['code'], 'error': exc.detail['message']})}\n\n"
             return
-
-        # ── Batch metadata phase ──────────────────────────────────────
-        # Per-segment WAVs were written during the loop to keep RAM bounded.
-        # Flush only lightweight fingerprints/quality metadata here.
-        _t_diskw_0 = time.perf_counter()
-        # P1.3 — fingerprints live per language so each track's staleness is
-        # judged against ITS OWN last generate. The flat job["seg_hashes"] is
-        # kept as a mirror of the CURRENT track's map: every existing consumer
-        # (the `done` event, dub-history restore, older frontends) already
-        # treats it as "the hashes of the language generated last", which is
-        # exactly what it now provably contains.
-        hashes = _seg_hashes_by_lang(job).setdefault(lang_code, {})
-        quality_map = job.setdefault("seg_num_step", {})
-        for (_si, _sr, _sid, _fp, _nstep) in _pending_seg_writes:
-            if _fp is not None:
-                hashes[_sid] = _fp
-            quality_map[_sid] = _nstep
-        job["seg_hashes"] = dict(hashes)
-        # Duration-planner calibration: per-language (chars, natural dur)
-        # records. update() (not replace) so partial regens keep accumulating
-        # samples from earlier runs of this track.
-        if _natural_dur_records:
-            job.setdefault("seg_natural_durs_by_lang", {}).setdefault(
-                lang_code, {},
-            ).update(_natural_dur_records)
-        # Single job flush instead of one per 8 segments.
-        _save_job(job_id, job)
-        _t_diskw = time.perf_counter() - _t_diskw_0
 
         sr = backend.sample_rate
         slot_fit = (req.slot_fit or "time_stretch").lower()
@@ -1765,7 +1769,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                 allow_video_retime=bool(_fo.allow_video_retime) if _fo is not None and _fo.allow_video_retime is not None else _fit_defaults.allow_video_retime,
                 min_audio_rate=_underrun_min_rate(),
             )
-            _seg_order = job.get("seg_order") or []
+            _seg_order = expected_order
             fit_plan = plan_fit(
                 [
                     {
@@ -1792,7 +1796,6 @@ async def dub_generate(job_id: str, req: DubRequest):
         os.makedirs(os.path.dirname(track_path), exist_ok=True)
 
         import gc
-        import tempfile
         import numpy as np
 
         mix_samples = max(total_samples, 1)
@@ -1911,7 +1914,7 @@ async def dub_generate(job_id: str, req: DubRequest):
                     slot_samples_eff = int(max(0.0, (effective_end - start)) * sr)
                     if slot_samples_eff > 0 and wl > slot_samples_eff:
                         overflow_s = (wl - slot_samples_eff) / sr
-                        yield f"data: {json.dumps({'type': 'error', 'segment': i, 'segment_id': job['seg_order'][i], 'error_code': 'dub_timing_overflow', 'error': 'Speech exceeds its time slot. Shorten the translation or choose Strict Slot or Stretch Video before exporting.', 'overflow_s': round(overflow_s, 3)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'error', 'segment': i, 'segment_id': expected_order[i], 'error_code': 'dub_timing_overflow', 'error': 'Speech exceeds its time slot. Shorten the translation or choose Strict Slot or Stretch Video before exporting.', 'overflow_s': round(overflow_s, 3)})}\n\n"
                         return
                     else:
                         fit_status.append({"status": "fits"})
@@ -2016,9 +2019,15 @@ async def dub_generate(job_id: str, req: DubRequest):
                     pass
                 _release_audio_tensors()
 
+            # No await separates this final check from track/metadata publication.
+            # In particular, a subtitle import during asynchronous fitting wins.
+            if _get_job(job_id) is not job or job.get("segments") != source_segments:
+                yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"
+                return
             _t_save_0 = time.perf_counter()
             mix_audio.flush()
-            _write_memmap_wav_atomic(track_path, mix_audio[:mix_samples], sr)
+            staged_track = os.path.join(staging_dir, os.path.basename(track_path))
+            _write_memmap_wav_atomic(staged_track, mix_audio[:mix_samples], sr)
             _t_save = time.perf_counter() - _t_save_0
             _t_mix = _t_save_0 - _t_loop_end
         finally:
@@ -2051,66 +2060,115 @@ async def dub_generate(job_id: str, req: DubRequest):
         # mux step needs this to know whether to use the original video as-is
         # or stretch it per the plan.
         track_dur = total_samples / sr if total_samples > 0 else 0.0
-        # Publish the already validated snapshot with the completed track.
-        # Preserve other languages that may have been added during rendering.
-        job["segments"] = publication["segments"]
-        for key in ("segments_i18n", "segments_i18n_cue_sources"):
-            job.setdefault(key, {}).update(publication[key])
-        job["dubbed_tracks"][lang_code] = {
-            "path": track_path,
-            "language": req.language,
-            "language_code": lang_code,
-            "duration": round(track_dur, 4),
-            "timing_strategy": strategy,
-        }
+        def publish():
+            with dub_pipeline._dub_jobs_lock:
+                if _get_job(job_id) is not job or job.get("segments") != source_segments:
+                    return False
+                published_job = copy.deepcopy(job)
+                artifacts = {**staged_segments, track_path: staged_track}
+                with _install_dub_artifacts(artifacts):
+                    # ── Batch metadata phase ──────────────────────────────────────
+                    # Per-segment WAVs were written during the loop to keep RAM bounded.
+                    # Flush only lightweight fingerprints/quality metadata here.
+                    # P1.3 — fingerprints live per language so each track's staleness is
+                    # judged against ITS OWN last generate. The flat published_job["seg_hashes"] is
+                    # kept as a mirror of the CURRENT track's map: every existing consumer
+                    # (the `done` event, dub-history restore, older frontends) already
+                    # treats it as "the hashes of the language generated last", which is
+                    # exactly what it now provably contains.
+                    hashes = _seg_hashes_by_lang(published_job).setdefault(lang_code, {})
+                    quality_map = published_job.setdefault("seg_num_step", {})
+                    for (_si, _sr, _sid, _fp, _nstep) in _pending_seg_writes:
+                        if _fp is not None:
+                            hashes[_sid] = _fp
+                        quality_map[_sid] = _nstep
+                    published_job["seg_hashes"] = dict(hashes)
+                    # Duration-planner calibration: per-language (chars, natural dur)
+                    # records. update() (not replace) so partial regens keep accumulating
+                    # samples from earlier runs of this track.
+                    if _natural_dur_records:
+                        published_job.setdefault("seg_natural_durs_by_lang", {}).setdefault(
+                            lang_code, {},
+                        ).update(_natural_dur_records)
+                    published_job["seg_order"] = list(expected_order)
+                    # Publish the already validated snapshot with the completed track.
+                    # Preserve other languages that may have been added during rendering.
+                    published_job["segments"] = publication["segments"]
+                    for key in ("segments_i18n", "segments_i18n_cue_sources"):
+                        published_job.setdefault(key, {}).update(publication[key])
+                    published_job["dubbed_tracks"][lang_code] = {
+                        "path": track_path,
+                        "language": req.language,
+                        "language_code": lang_code,
+                        "duration": round(track_dur, 4),
+                        "timing_strategy": strategy,
+                    }
 
-        # Persist the timing strategy + (for Mode B) the per-segment stretch
-        # plan so dub_export can build the matching video pipeline at mux
-        # time. Plans are keyed by language code because each language gets
-        # its own dub track with its own natural-rate audio layout.
-        job["language"] = req.language
-        job["language_code"] = lang_code
-        job["timing_strategy"] = strategy
-        # Keep job segments in lock-step with what was just rendered so
-        # subtitle export / burn-in use the translated text (#309).
-        job["dubbed_tracks"][lang_code]["source_segments"] = _track_source_segments(job)
-        if strategy == "stretch_video":
-            stretch_plans = job.setdefault("video_stretch_plans", {})
-            stretch_plans[lang_code] = {
-                "plan": video_stretch_plan,
-                "total_duration": round(track_dur, 4),
-                "orig_duration": round(orig_total_dur, 4),
-            }
-        elif strategy == "smart_fit" and fit_plan is not None:
-            # video_stretch_plans stays untouched — smart_fit persists its
-            # own keyspace so a job can carry both without clobbering.
-            _fit_params_payload = {
-                "timing_strategy": strategy,
-                "max_audio_only_rate": fit_params.max_audio_only_rate,
-                "audio_rate_cap": fit_params.audio_rate_cap,
-                "video_slow_cap": fit_params.video_slow_cap,
-                "gap_guard_s": fit_params.gap_guard_s,
-                "allow_video_retime": fit_params.allow_video_retime,
-            }
-            fit_fp = fit_fingerprint(_fit_params_payload)
-            job.setdefault("fit_plans", {})[lang_code] = {
-                # Same dict shape _build_video_stretch_filter_graph consumes.
-                "plan": fit_plan.video_plan,
-                # Cue times from actual stretched sample positions — for
-                # subtitle export on the fitted timeline.
-                "fitted_segments": fitted_cues,
-                "total_duration": round(track_dur, 4),
-                "orig_duration": round(orig_total_dur, 4),
-                "params": _fit_params_payload,
-                "fit_fp": fit_fp,
-            }
-            job["dubbed_tracks"][lang_code]["fit_fp"] = fit_fp
-        # Every new cache preserves natural speech. Old slotted caches must
-        # be regenerated once because their missing tails cannot be recovered.
-        _kind = "natural"
-        job.setdefault("seg_wav_kind_by_lang", {})[lang_code] = _kind
-        job["seg_wav_kind"] = _kind
-        _save_job(job_id, job)
+                    # Persist the timing strategy + (for Mode B) the per-segment stretch
+                    # plan so dub_export can build the matching video pipeline at mux
+                    # time. Plans are keyed by language code because each language gets
+                    # its own dub track with its own natural-rate audio layout.
+                    published_job["language"] = req.language
+                    published_job["language_code"] = lang_code
+                    published_job["timing_strategy"] = strategy
+                    # Keep published_job segments in lock-step with what was just rendered so
+                    # subtitle export / burn-in use the translated text (#309).
+                    published_job["dubbed_tracks"][lang_code]["source_segments"] = _track_source_segments(published_job)
+                    if strategy == "stretch_video":
+                        stretch_plans = published_job.setdefault("video_stretch_plans", {})
+                        stretch_plans[lang_code] = {
+                            "plan": video_stretch_plan,
+                            "total_duration": round(track_dur, 4),
+                            "orig_duration": round(orig_total_dur, 4),
+                        }
+                    elif strategy == "smart_fit" and fit_plan is not None:
+                        # video_stretch_plans stays untouched — smart_fit persists its
+                        # own keyspace so a published_job can carry both without clobbering.
+                        _fit_params_payload = {
+                            "timing_strategy": strategy,
+                            "max_audio_only_rate": fit_params.max_audio_only_rate,
+                            "audio_rate_cap": fit_params.audio_rate_cap,
+                            "video_slow_cap": fit_params.video_slow_cap,
+                            "gap_guard_s": fit_params.gap_guard_s,
+                            "allow_video_retime": fit_params.allow_video_retime,
+                        }
+                        fit_fp = fit_fingerprint(_fit_params_payload)
+                        published_job.setdefault("fit_plans", {})[lang_code] = {
+                            # Same dict shape _build_video_stretch_filter_graph consumes.
+                            "plan": fit_plan.video_plan,
+                            # Cue times from actual stretched sample positions — for
+                            # subtitle export on the fitted timeline.
+                            "fitted_segments": fitted_cues,
+                            "total_duration": round(track_dur, 4),
+                            "orig_duration": round(orig_total_dur, 4),
+                            "params": _fit_params_payload,
+                            "fit_fp": fit_fp,
+                        }
+                        published_job["dubbed_tracks"][lang_code]["fit_fp"] = fit_fp
+                    # Every new cache preserves natural speech. Old slotted caches must
+                    # be regenerated once because their missing tails cannot be recovered.
+                    _kind = "natural"
+                    published_job.setdefault("seg_wav_kind_by_lang", {})[lang_code] = _kind
+                    published_job["seg_wav_kind"] = _kind
+                    _save_job(job_id, published_job)
+
+                job.clear()
+                job.update(published_job)
+                return True
+
+        _t_diskw_0 = time.perf_counter()
+        try:
+            committed = publish()
+        except Exception as exc:
+            from core.public_errors import stream_generation_failure
+            logger.exception("Dub publication failed for job %s", log_safe(job_id))
+            detail = stream_generation_failure(exc)["detail"]
+            yield f"data: {json.dumps({'type': 'error', 'error': detail})}\n\n"
+            return
+        if not committed:
+            yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"
+            return
+        _t_diskw = time.perf_counter() - _t_diskw_0
 
         _t_total = time.perf_counter() - _t_start
         logger.info(
@@ -2120,6 +2178,16 @@ async def dub_generate(job_id: str, req: DubRequest):
         )
 
         yield f"data: {json.dumps({'type': 'done', 'segments_processed': total, 'language_code': lang_code, 'tracks': list(job['dubbed_tracks'].keys()), 'sync_scores': sync_scores, 'fit_status': fit_status, 'timing_strategy': strategy, 'seg_hashes': job.get('seg_hashes', {}), 'seg_num_step': job.get('seg_num_step', {})})}\n\n"
+
+    async def _stream(task_id):
+        job_dir = os.path.join(DUB_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        # The context also cleans staged WAVs on rejection, cancellation and
+        # generator close; no rejected speech can become a partial-regen cache.
+        with tempfile.TemporaryDirectory(prefix=".render-", dir=job_dir) as staging_dir:
+            async with contextlib.aclosing(_render_stream(task_id, staging_dir)) as render:
+                async for event in render:
+                    yield event
 
     task_id = f"dub_{job_id}_{int(time.time())}"
     await task_manager.add_task(task_id, "dub_generate", _stream, task_id)
