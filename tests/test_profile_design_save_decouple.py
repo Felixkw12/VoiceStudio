@@ -19,6 +19,7 @@ import asyncio
 import importlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -86,6 +87,59 @@ def test_design_save_creates_row_when_model_unavailable(iso, monkeypatch):
     # is a superset of it, not an exact match.
     stored = json.loads(row["vd_states"])
     assert stored == {**_VD, "Style": "Auto", "EnglishAccent": "Auto", "ChineseDialect": "Auto"}
+
+
+def test_cold_design_save_does_not_load_engine(iso, monkeypatch):
+    """An offline/cold renderer cannot hold the persistence request open."""
+    _, db, prof = iso
+    from api.routers import archetypes as arch
+    from services import model_manager
+    monkeypatch.setattr(model_manager, "get_model_status", lambda: {"loaded": False})
+    renders = []
+
+    async def blocked_render(*args):
+        renders.append(args)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(arch, "_render_archetype_wav", blocked_render)
+
+    async def save():
+        return await asyncio.wait_for(prof.create_profile(
+            name="Offline design", ref_audio=None, ref_text="", instruct="female",
+            language="English", seed=None, personality="", kind="design",
+            vd_states=json.dumps(_VD), image=None,
+        ), timeout=1)
+
+    result = asyncio.run(save())
+    assert not renders
+    with db.db_conn() as conn:
+        row = conn.execute("SELECT ref_audio_path FROM voice_profiles WHERE id=?", (result["id"],)).fetchone()
+    assert row is not None and not row["ref_audio_path"]
+
+
+def test_warm_design_save_preserves_identity_sample(iso, monkeypatch):
+    """A resident engine still renders the reference used by later synthesis."""
+    cfg, db, prof = iso
+    from api.routers import archetypes as arch
+    from services import model_manager
+    monkeypatch.setattr(model_manager, "get_model_status", lambda: {"loaded": True})
+    renders = []
+
+    async def render(recipe, out_path):
+        renders.append(recipe)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b"identity sample")
+
+    monkeypatch.setattr(arch, "_render_archetype_wav", render)
+    result = asyncio.run(prof.create_profile(
+        name="Warm design", ref_audio=None, ref_text="Sample line", instruct="female",
+        language="English", seed=None, personality="", kind="design",
+        vd_states=json.dumps(_VD), image=None,
+    ))
+    assert len(renders) == 1 and renders[0]["sample_script"] == "Sample line"
+    with db.db_conn() as conn:
+        row = conn.execute("SELECT ref_audio_path FROM voice_profiles WHERE id=?", (result["id"],)).fetchone()
+    assert (Path(cfg.VOICES_DIR) / row["ref_audio_path"]).read_bytes() == b"identity sample"
 
 
 def test_all_auto_design_is_saveable(iso, monkeypatch):

@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import io
 import json
 import logging
@@ -1624,6 +1625,60 @@ async def dub_preview_segment(job_id: str, segment_index: int, lang: str = Query
 # ── Second-pass ASR QC (Wave 3.3 / Spec 5) ───────────────────────────────────
 
 
+def _qc_snapshot(job: dict, lang: str) -> dict:
+    """Freeze the selected track's scoring inputs across an ASR await."""
+    return copy.deepcopy({
+        "segments": job.get("segments"),
+        "seg_order": job.get("seg_order"),
+        "timing_strategy": job.get("timing_strategy"),
+        **{key: {lang: (job.get(key) or {}).get(lang)} for key in (
+            "dubbed_tracks", "segments_i18n", "segments_i18n_cue_sources",
+            "fit_plans", "video_stretch_plans",
+        )},
+    })
+
+
+def _qc_audio_revision(path: str) -> tuple | None:
+    # Regeneration writes the same WAV path before publishing new metadata.
+    try:
+        stat = os.stat(path)
+        return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+    except OSError:
+        return None
+
+
+def _qc_source_segments(job: dict, lang: str, segments: list[dict]) -> list[dict] | None:
+    """Resolve source ownership before ASR; legacy ordinal times can be ambiguous."""
+    track = job["dubbed_tracks"][lang]
+    source = track.get("source_segments")
+    if not source:
+        return source
+    segment_ids = [str(seg["id"]) for seg in segments if seg.get("id") is not None]
+    source_ids = [str(row["id"]) for row in source if row.get("id") is not None]
+    if (len(segment_ids) == len(set(segment_ids)) == len(segments)
+            and len(source_ids) == len(set(source_ids)) == len(source) == len(segments)
+            and set(segment_ids) == set(source_ids)):
+        return source
+    texts = (job.get("segments_i18n") or {}).get(lang) or {}
+    if not source_ids and len(source) == len(segments) == len(texts) == 1:
+        sid = segments[0].get("id")
+        if sid is not None and str(sid) in texts:
+            return [dict(source[0], id=sid)]
+    # A complete Smart Fit cue set proves the final timeline by stable identity
+    # even when the original source snapshot predates identity persistence.
+    if track.get("timing_strategy") == "smart_fit":
+        fitted = ((job.get("fit_plans") or {}).get(lang) or {}).get("fitted_segments") or []
+        fitted_ids = [str(cue["id"]) for cue in fitted if cue.get("id") is not None]
+        if (len(segment_ids) == len(set(segment_ids)) == len(segments)
+                and len(fitted_ids) == len(set(fitted_ids)) == len(fitted) == len(segments)
+                and set(segment_ids) == set(fitted_ids)):
+            return None
+    raise HTTPException(status_code=409, detail={
+        "code": "dub_qc_timing_identity_missing",
+        "message": "Regenerate the selected track with explicit unique segment IDs before QC: saved source timing identities are ambiguous.",
+    })
+
+
 @router.post("/dub/qc/{job_id}")
 async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: float = Query(0.5)):
     """Re-recognize the dubbed audio and flag lines whose recognized text
@@ -1633,7 +1688,7 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
     re-dub. The generated text stays authoritative (design delta from
     pyvideotrans, which overwrites subtitles)."""
     from services import dub_qc
-    from services.dub_pipeline import put_job, save_job
+    from services.dub_pipeline import _dub_jobs_lock, put_and_save_job
 
     _job_dir_or_400(job_id)
     lang = _safe_lang_or_400(lang)
@@ -1641,15 +1696,21 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     tracks = job.get("dubbed_tracks", {})
-    if lang and lang in tracks:
-        wav_path = _dub_artifact(tracks[lang].get("path"), job_id, missing_detail="Dubbed audio file not found")
-    elif tracks:
-        wav_path = _dub_artifact(list(tracks.values())[0].get("path"), job_id, missing_detail="Dubbed audio file not found")
-    else:
+    if not tracks:
         raise HTTPException(status_code=400, detail="No dubbed audio track generated yet")
+    # Resolve the text against the same track chosen for recognition, including
+    # the legacy first-track fallback when no matching language is requested.
+    selected_lang = lang if lang and lang in tracks else next(iter(tracks))
+    wav_path = _dub_artifact(tracks[selected_lang].get("path"), job_id, missing_detail="Dubbed audio file not found")
+    live_job = job
+    with _dub_jobs_lock:
+        job = _qc_snapshot(live_job, selected_lang)
+        audio_revision = _qc_audio_revision(wav_path)
+    tracks = job["dubbed_tracks"]
     segments = job.get("segments") or []
     if not segments:
         raise HTTPException(status_code=400, detail="Job has no segments")
+    source = _qc_source_segments(job, selected_lang, segments)
 
     # TTS-only install: no ASR model on disk → typed 409 with a download CTA,
     # BEFORE any backend load could silently auto-download whisper weights.
@@ -1696,23 +1757,64 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
         raise HTTPException(status_code=500, detail=f"QC transcription failed: {e}")
 
     seg_ids = job.get("seg_order") or [s.get("id", i) for i, s in enumerate(segments)]
-    scored = dub_qc.score_dub(segments, recognized, drift_threshold=drift_threshold, seg_ids=seg_ids)
+    qc_segments = _segments_for_lang(job, selected_lang)
+    track = tracks[selected_lang]
+    # A later generate can replace both the job's text and source timings.
+    # The selected track snapshots its own source timeline before fitting.
+    # Legacy snapshots have no identities: positional pairing can silently
+    # assign another line's times after a later render reorders the job.
+    if source and any(row.get("id") is not None for row in source):
+        qc_segments = _apply_fitted_times(qc_segments, source)
+    strategy = track.get("timing_strategy") or job.get("timing_strategy")
+    if strategy == "smart_fit":
+        entry = (job.get("fit_plans") or {}).get(selected_lang) or {}
+        fitted = entry.get("fitted_segments")
+        if fitted:
+            qc_segments = _apply_fitted_times(qc_segments, fitted)
+    elif strategy == "stretch_video":
+        entry = (job.get("video_stretch_plans") or {}).get(selected_lang) or {}
+        plan = entry.get("plan")
+        if plan:
+            from services.fitted_subtitles import map_time_to_fitted
+            # QC follows stable ids, not chronological list order; the subtitle
+            # helper's monotonic-list guard would corrupt reordered lines.
+            qc_segments = [dict(seg, start=map_time_to_fitted(seg["start"], plan),
+                                end=map_time_to_fitted(seg["end"], plan))
+                           for seg in qc_segments]
+    scored = dub_qc.score_dub(qc_segments, recognized,
+                              drift_threshold=drift_threshold, seg_ids=seg_ids)
 
-    # Annotate each segment (non-destructive — content text untouched).
-    by_id = {q.seg_id: q for q in scored}
-    for i, s in enumerate(segments):
-        sid = str(seg_ids[i]) if i < len(seg_ids) else str(s.get("id", i))
-        q = by_id.get(sid)
-        if q is None:
-            continue
-        s["qc_drift"] = q.drift
-        s["qc_flagged"] = q.flagged
-        s["qc_recognized"] = q.recognized_text
-        if q.new_start is not None:
-            s["qc_measured_start"] = q.new_start
-            s["qc_measured_end"] = q.new_end
-    put_job(job_id, job)
-    save_job(job_id, job)
+    # Scoring uses the frozen inputs, but a render/edit/deletion can complete
+    # while ASR runs. Publish only into that same revision, under the same lock
+    # as history deletion so QC cannot resurrect a withdrawn job.
+    with _dub_jobs_lock:
+        current = _get_job(job_id)
+        if (current is not live_job
+                or _qc_snapshot(current, selected_lang) != job
+                or _qc_audio_revision(wav_path) != audio_revision):
+            raise HTTPException(status_code=409, detail={
+                "code": "dub_qc_track_changed",
+                "message": "The dub changed during QC. Run QC again on the current track.",
+            })
+        # Annotate each segment (non-destructive — content text untouched).
+        by_id = {q.seg_id: q for q in scored}
+        for i, s in enumerate(segments):
+            sid = str(seg_ids[i]) if i < len(seg_ids) else str(s.get("id", i))
+            q = by_id.get(sid)
+            if q is None:
+                continue
+            s["qc_drift"] = q.drift
+            s["qc_flagged"] = q.flagged
+            s["qc_recognized"] = q.recognized_text
+            if q.new_start is not None:
+                s["qc_measured_start"] = q.new_start
+                s["qc_measured_end"] = q.new_end
+        current["segments"] = segments
+        if not put_and_save_job(job_id, current):
+            raise HTTPException(status_code=409, detail={
+                "code": "dub_qc_track_changed",
+                "message": "The dub changed during QC. Run QC again on the current track.",
+            })
 
     flagged = [q for q in scored if q.flagged]
     payload = json.dumps({"event": "qc_done", "engine": engine_id,

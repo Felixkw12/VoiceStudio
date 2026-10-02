@@ -87,6 +87,35 @@ metadata and the backend fallback mirror it.
 - The Twilio guide and integration directory describe the guided setup and in-app integration pages (#2304)
 
 ### Fixed
+
+- Saving a voice design skips cold engine loading and downloads (#2583) — thanks @simoncheese!
+
+- Electron streaming previews drain the final PCM chunk and crossfade recovered chunks only while audio overlaps (#2518) — thanks @rudycelekli!
+- Allow application-data relocation into existing empty folders without removing files added during copying (#2521) — thanks @rudycelekli!
+- Preserve models folder names containing comment characters across restart (#2519) — thanks @rudycelekli!
+- Re-render cached longform audio when its synthesis language changes (#2524) — thanks @rudycelekli!
+- Reusing Clone takes restores their saved WAV precision and mastering controls (#2526) — thanks @rudycelekli!
+- Keep Electron remote connection and WebSocket-ticket deadlines active while reading response bodies (#2527) — thanks @rudycelekli!
+- Preserve CRLF and CR metadata paragraphs in longform audio exports (#2528) — thanks @rudycelekli!
+- Cancelled dictation starts cannot replace the next session after a delayed connection ticket arrives (#2533) — thanks @rudycelekli!
+- Electron remote WebSockets retain the selected backend path prefix and path-bound tickets (#2537) — thanks @rudycelekli!
+- Refresh longform audio after locking a voice to another take (#2535) — thanks @rudycelekli!
+- Retire cancelled longform streams and failed setup jobs while preserving resume checkpoints (#2536) — thanks @rudycelekli!
+- Buffered dictation utterances receive distinct saved-history IDs so deleting one preserves the others (#2538) — thanks @rudycelekli!
+- Compare voices warns when a generated preview omits speech, while keeping the surviving audio playable (#2548) — thanks @rudycelekli!
+- Pronunciation scopes match language picker names and ISO codes without confusing Spanish and Estonian (#2542) — thanks @rudycelekli!
+- Keep batch retries and deletion from racing over active job files (#2547) — thanks @rudycelekli!
+- Dictionary backups preserve duplicate-entry pronunciation order across preview, synthesis and restore (#2552) — thanks @rudycelekli!
+- Gallery trimming no longer stalls waiting for audio metadata before decoding (#2558) — thanks @rudycelekli!
+- Native exports preserve existing files when a replacement write fails (#2560) — thanks @rudycelekli!
+- Runtime setup keeps concurrent package download progress separate (#2562) — thanks @rudycelekli!
+- Honor storage scan budgets in large flat directories (#2564) — thanks @rudycelekli!
+- Clean visual-context frame directories after worker completion (#2566) — thanks @rudycelekli!
+- Preserve concurrent partial MCP binding edits (#2568) — thanks @rudycelekli!
+- Preserve CPU forced-alignment fallback when loading the MPS aligner fails (#2570) — thanks @rudycelekli!
+- Keep untimed transcript segments alongside precise word-timed speech (#2572) — thanks @rudycelekli!
+- Score dub quality against the selected track’s saved language text, reject stale checks, and preserve audio when segment identities conflict (#2574) — thanks @rudycelekli!
+- Accept Japanese Han letters in translation and refinement script checks (#2576) — thanks @rudycelekli!
 - Keep audiobook chapter boundaries when importing CR-only manuscripts (#2508) — thanks @rudycelekli!
 - Preserve busy sidecars during engine-level unload instead of terminating their active operation (#2507) — thanks @Anuj04432 and @rudycelekli!
 - Exclude downloaded caption comments while preserving spoken metadata words (#2510) — thanks @rudycelekli!

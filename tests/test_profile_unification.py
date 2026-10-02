@@ -52,6 +52,8 @@ def fake_render(monkeypatch):
         out_path.write_bytes(_FAKE_AUDIO)
 
     from api.routers import archetypes as _arch
+    from services import model_manager
+    monkeypatch.setattr(model_manager, "get_model_status", lambda: {"loaded": True})
     monkeypatch.setattr(_arch, "_render_archetype_wav", _fake)
     return _fake
 

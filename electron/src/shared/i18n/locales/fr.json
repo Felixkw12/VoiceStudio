@@ -1325,6 +1325,8 @@
     "qc_result": "{{flagged}} lignes sur {{total}} peuvent nécessiter une réécoute",
     "qc_clean": "Toutes les lignes {{total}} correspondent au script",
     "qc_failed": "Échec de la vérification du timing : {{message}}",
+    "qc_track_changed": "Le doublage a changé pendant le contrôle qualité. Relancez le contrôle sur la piste actuelle.",
+    "qc_identity_missing": "Les segments ne sont pas identifiés de façon univoque. Régénérez cette piste avec des identifiants de segment uniques.",
     "paste_translation_btn": "Coller une traduction",
     "paste_translation_title": "Coller une traduction",
     "paste_translation_desc": "Collez une traduction réalisée ailleurs (ChatGPT, DeepL, un traducteur humain). Elle est appliquée aux segments existants — les timings et la transcription d'origine restent intacts.",
