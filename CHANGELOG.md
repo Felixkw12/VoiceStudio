@@ -101,6 +101,8 @@ metadata and the backend fallback mirror it.
 - License notice: commercial use is free under the AGPL; the paid licence is for closed-source use, with Pro plans linked (#2578)
 
 ### Fixed
+
+- Preserve subtitle edits made during transcription, keep dub lock waits off the event loop, and report a committed track as complete after late cancellation (#2585)
 - Dub publication keeps file and database work off the event loop, preserves source metadata, waits safely on cancellation, and restores audio after save failures (#2585)
 - Dubbing finishes when quality-check annotations arrive during assembly and clears measurements of replaced audio while still protecting subtitle edits (#2585)
 

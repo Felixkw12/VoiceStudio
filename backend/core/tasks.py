@@ -32,6 +32,19 @@ def _stream_failure(update):
     return detail if isinstance(detail, str) and detail else "Task failed"
 
 
+def _stream_committed(update):
+    """A completed durable commit wins over a cancellation that arrived late."""
+    if isinstance(update, bytes):
+        update = update.decode("utf-8", errors="replace")
+    if not isinstance(update, str):
+        return False
+    try:
+        payload = json.loads("\n".join(line[5:].strip() for line in update.splitlines() if line.startswith("data:")))
+    except (ValueError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("type") == "done" and payload.get("committed") is True
+
+
 class TaskManager:
     """In-memory task dispatcher with SQLite-backed metadata.
 
@@ -141,7 +154,7 @@ class TaskManager:
                 if inspect.isasyncgen(res):
                     async with aclosing(res):
                         async for update in res:
-                            if t.get("cancelled"):
+                            if t.get("cancelled") and not _stream_committed(update):
                                 await self._push_event(task_id, f"data: {json.dumps({'type': 'cancelled'})}\n\n")
                                 t["status"] = "cancelled"
                                 try: job_store.mark_cancelled(task_id)

@@ -23,3 +23,12 @@ it('localizes a source edit that interrupts dub publication', () => {
   expect(failure.reason).toBe('Localized subtitle change');
   expect(translate).toHaveBeenCalledWith('dub.source_changed');
 });
+
+it('localizes an edit preserved when transcription finishes', () => {
+  const translate = vi.spyOn(i18next, 't').mockReturnValue('Localized preserved edit');
+  const failure = publicFailureFromEvent({
+    type: 'error', error_code: 'dub_transcription_source_changed', error: 'Server fallback',
+  }, 'Task failed');
+  expect(failure.reason).toBe('Localized preserved edit');
+  expect(translate).toHaveBeenCalledWith('dub.transcription_source_changed');
+});

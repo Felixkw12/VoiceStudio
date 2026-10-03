@@ -11,6 +11,21 @@ import soundfile as sf
 from schemas.requests import DubRequest
 
 
+class ContendedLock:
+    """Notify only after a worker actually finds the real lock held elsewhere."""
+    def __init__(self, lock, loop, contended):
+        self.lock, self.loop, self.contended = lock, loop, contended
+
+    def __enter__(self):
+        if not self.lock.acquire(blocking=False):
+            self.loop.call_soon_threadsafe(self.contended.set)
+            self.lock.acquire()
+        return self
+
+    def __exit__(self, *_):
+        self.lock.release()
+
+
 @pytest.fixture
 def render_dub(monkeypatch, tmp_path):
     import api.routers.dub_generate as dg
@@ -469,7 +484,9 @@ def test_cancellation_waits_for_publication_before_staging_cleanup(render_dub, m
             assert not render.done()
             for _ in range(2):
                 render.cancel()
-                await asyncio.sleep(0)
+                cancellation_delivered = asyncio.Event()
+                loop.call_soon(cancellation_delivered.set)
+                await cancellation_delivered.wait()
                 assert not render.done(), 'cancellation detached the in-flight publisher'
                 assert list(render_dub.path.glob('.render-*')), 'staging deleted under the publisher'
             release.set()
@@ -541,18 +558,23 @@ def test_delete_serializes_with_publication_without_resurrecting_job(
     dp.save_job('job', render_dub.job)
     monkeypatch.setattr(dg, '_get_job', dp.get_job)
     release = threading.Event()
+    order = []
     def delete():
         def delete_rows():
             with db.db_conn() as conn:
                 conn.execute('DELETE FROM dub_history WHERE id=?', ('job',))
+            order.append('delete')
         dp.purge_jobs(['job'], delete_rows=delete_rows)
     async def exercise():
         loop = asyncio.get_running_loop()
         entered = asyncio.Event()
+        contended = asyncio.Event()
+        monkeypatch.setattr(dp, '_dub_jobs_lock', ContendedLock(dp._dub_jobs_lock, loop, contended))
         def slow_save(*args):
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(2)
             render_dub.real_save(*args)
+            order.append('save')
         monkeypatch.setattr(dg, '_save_job', slow_save)
         if delete_before_publication:
             finish = dg._finish_publication
@@ -569,7 +591,7 @@ def test_delete_serializes_with_publication_without_resurrecting_job(
             try:
                 await asyncio.wait_for(entered.wait(), 10)
                 deletion = loop.run_in_executor(None, delete)
-                await asyncio.sleep(0)
+                await asyncio.wait_for(contended.wait(), 10)
                 assert not deletion.done(), 'delete crossed the publication lock'
                 release.set()
                 await asyncio.gather(render, deletion)
@@ -581,6 +603,7 @@ def test_delete_serializes_with_publication_without_resurrecting_job(
     with db.db_conn() as conn:
         assert conn.execute('SELECT id FROM dub_history WHERE id=?', ('job',)).fetchone() is None
     assert not list(render_dub.path.glob('.render-*'))
+    assert order == (['delete'] if delete_before_publication else ['save', 'delete'])
 
 
 def test_cancel_before_publication_starts_discards_staging(render_dub, monkeypatch):
@@ -605,11 +628,15 @@ def test_cancel_before_publication_starts_discards_staging(render_dub, monkeypat
 def test_import_finishing_during_publication_preserves_new_subtitles(render_dub, monkeypatch):
     import threading
     from api.routers import dub_core, dub_generate as dg
+    from services import dub_pipeline as dp
 
     release = threading.Event()
+    order = []
     async def exercise():
         loop = asyncio.get_running_loop()
         publishing = asyncio.Event()
+        contended = asyncio.Event()
+        monkeypatch.setattr(dp, '_dub_jobs_lock', ContendedLock(dp._dub_jobs_lock, loop, contended))
         reading = asyncio.Event()
         read_finished = asyncio.Event()
         class Upload:
@@ -621,15 +648,16 @@ def test_import_finishing_during_publication_preserves_new_subtitles(render_dub,
         def slow_save(*_):
             loop.call_soon_threadsafe(publishing.set)
             assert release.wait(2)
+            order.append('save')
         monkeypatch.setattr(dg, '_save_job', slow_save)
         monkeypatch.setattr(dub_core, '_get_job', lambda _: render_dub.job)
-        monkeypatch.setattr(dub_core, '_save_job', lambda *_: None)
+        monkeypatch.setattr(dub_core, '_save_job', lambda *_: order.append('import'))
         imported = asyncio.create_task(dub_core.dub_import_srt('job', Upload()))
         await reading.wait()  # endpoint has started reading before publication
         render = asyncio.create_task(render_dub.arun())
         try:
             await asyncio.wait_for(read_finished.wait(), 10)
-            await asyncio.sleep(0)
+            await asyncio.wait_for(contended.wait(), 10)
             assert not imported.done(), 'import mutated the job during publication'
             release.set()
             events, result = await asyncio.gather(render, imported)
@@ -637,7 +665,75 @@ def test_import_finishing_during_publication_preserves_new_subtitles(render_dub,
             assert result['segments'][0]['text'] == 'replacement subtitle'
             assert render_dub.job['segments'][0]['text'] == 'replacement subtitle'
             assert 'en' in render_dub.job['dubbed_tracks']
+            assert order == ['save', 'import']
         finally:
             release.set()
             await asyncio.gather(render, imported, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_committed_publication_reports_done_after_late_cancel(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+    from core.tasks import TaskManager
+
+    store = TaskManager.worker.__globals__['job_store']
+    states = []
+    for name in ['create', 'append_event', 'mark_running']:
+        monkeypatch.setattr(store, name, lambda *a, **kw: None)
+    monkeypatch.setattr(store, 'mark_done', lambda *_: states.append('done'))
+    monkeypatch.setattr(store, 'mark_cancelled', lambda *_: states.append('cancelled'))
+    monkeypatch.setattr(TaskManager.worker.__globals__['run_sentinel'], 'touch_activity', lambda *_: None)
+    async def exercise():
+        manager = TaskManager()
+        monkeypatch.setattr(dg, 'task_manager', manager)
+        def late_cancel(*_):
+            manager.cancel_task(next(iter(manager.active_tasks)))
+        monkeypatch.setattr(dg, '_save_job', late_cancel)
+        await render_dub.arun()
+        worker = asyncio.create_task(manager.worker())
+        try:
+            await asyncio.wait_for(manager.queue.join(), 10)
+            task = next(iter(manager.active_tasks.values()))
+            assert render_dub.job['dubbed_tracks']['en']['path']
+            assert task['status'] == 'done'
+            events = [json.loads(event[6:]) for event in task['history'] if event.startswith('data: ')]
+            assert events[-1]['type'] == 'done'
+            assert not any(event['type'] == 'cancelled' for event in events)
+        finally:
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+    asyncio.run(exercise())
+    assert states == ['done']
+
+
+def test_track_read_does_not_block_event_loop_behind_publication(render_dub, monkeypatch):
+    import threading
+    from api.routers import dub_export
+    from services import dub_pipeline as dp
+
+    monkeypatch.setattr(dp, '_dub_jobs', {'job': render_dub.job})
+    release = threading.Event()
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        held, reading = asyncio.Event(), asyncio.Event()
+        def hold_publication_lock():
+            with dp._dub_jobs_lock:
+                loop.call_soon_threadsafe(held.set)
+                assert release.wait(2), 'a blocked job lookup prevented the loop from releasing publication'
+        def read_job(job_id):
+            loop.call_soon_threadsafe(reading.set)
+            return dp.get_job(job_id)
+        monkeypatch.setattr(dub_export, '_get_job', read_job)
+        holding = loop.run_in_executor(None, hold_publication_lock)
+        await held.wait()
+        lookup = asyncio.create_task(dub_export.dub_list_tracks('job'))
+        try:
+            await asyncio.wait_for(reading.wait(), 10)
+            assert not lookup.done(), 'the event loop resumed only after the lock wait finished'
+            release.set()
+            assert await lookup == {'tracks': {}}
+            await holding
+        finally:
+            release.set()
+            await asyncio.gather(holding, lookup, return_exceptions=True)
     asyncio.run(exercise())

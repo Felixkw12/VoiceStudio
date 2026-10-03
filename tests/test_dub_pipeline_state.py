@@ -158,3 +158,57 @@ def test_save_job_upsert_does_not_clobber_language_with_empty():
     row = _lang_row(jid)
     assert row["language"] == "Bengali"
     assert row["language_code"] == "bn"
+
+
+def test_cancelled_ingest_waits_for_locked_worker_before_cleanup(monkeypatch, tmp_path):
+    import asyncio
+    import threading
+
+    release = threading.Event()
+    job_dir = tmp_path / 'queued-ingest'
+    job_dir.mkdir()
+    (job_dir / 'input.wav').write_bytes(b'pending input')
+    events = []
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        held, contended = asyncio.Event(), asyncio.Event()
+        original = dp._dub_jobs_lock
+        class Lock:
+            def __enter__(self):
+                if not original.acquire(blocking=False):
+                    loop.call_soon_threadsafe(contended.set)
+                    original.acquire()
+                return self
+            def __exit__(self, *_):
+                original.release()
+        monkeypatch.setattr(dp, '_dub_jobs_lock', Lock())
+        def publisher():
+            with original:
+                loop.call_soon_threadsafe(held.set)
+                assert release.wait(2), 'ingest lock wait blocked the event loop'
+        publishing = loop.run_in_executor(None, publisher)
+        await held.wait()
+        async def ingest():
+            async for event in dp.ingest_pipeline('queued-ingest', str(job_dir), {'kind': 'upload'}):
+                events.append(event)
+        task = asyncio.create_task(ingest())
+        try:
+            await asyncio.wait_for(contended.wait(), 10)
+            task.cancel()
+            rendezvous = asyncio.Event()
+            loop.call_soon(rendezvous.set)
+            await rendezvous.wait()
+            assert job_dir.exists(), 'cleanup raced the queued ingest worker'
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            await publishing
+        finally:
+            release.set()
+            await asyncio.gather(task, publishing, return_exceptions=True)
+    asyncio.run(exercise())
+    assert not job_dir.exists()
+    assert 'queued-ingest' not in dp._inflight_jobs
+    assert 'queued-ingest' not in dp._dub_jobs
+    assert any('cancelled' in event for event in events)

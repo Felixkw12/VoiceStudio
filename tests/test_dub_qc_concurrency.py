@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 
-@pytest.mark.parametrize('change', ['regenerate', 'text', 'timing', 'audio', 'delete', 'replace', None])
+@pytest.mark.parametrize('change', ['regenerate', 'text', 'timing', 'audio', 'delete', 'replace', 'publication_wait', None])
 def test_qc_does_not_publish_after_selected_render_changes(monkeypatch, tmp_path, change):
     from api.routers import dub_export, dub_generate
     from fastapi import HTTPException
@@ -38,8 +38,37 @@ def test_qc_does_not_publish_after_selected_render_changes(monkeypatch, tmp_path
             return {'segments': [{'start': 0., 'end': 2., 'text': 'hola mundo'}]}
     monkeypatch.setattr(asr_backend, 'load_active_asr_backend', Backend)
 
+    held_worker = []
+    release_worker = []
     async def guarded(pool, fn, **kwargs):
         recognition = fn()
+        if change == 'publication_wait':
+            import threading
+            loop = asyncio.get_running_loop()
+            held, contended = asyncio.Event(), asyncio.Event()
+            release = threading.Event()
+            release_worker.append(release)
+            original = dub_pipeline._dub_jobs_lock
+            class Lock:
+                def __enter__(self):
+                    if not original.acquire(blocking=False):
+                        loop.call_soon_threadsafe(contended.set)
+                        original.acquire()
+                    return self
+                def __exit__(self, *_):
+                    original.release()
+            monkeypatch.setattr(dub_export, '_dub_jobs_lock', Lock())
+            def publisher():
+                with original:
+                    loop.call_soon_threadsafe(held.set)
+                    assert release.wait(2), 'QC lock wait blocked the event loop'
+            held_worker.append(loop.run_in_executor(None, publisher))
+            await held.wait()
+            async def release_from_loop():
+                await asyncio.wait_for(contended.wait(), 10)
+                assert not held_worker[0].done()
+                release.set()
+            held_worker.append(asyncio.create_task(release_from_loop()))
         # These edits happen while an actual ASR worker releases the event loop.
         if change == 'regenerate':
             dub_generate._sync_job_segments(job, DubRequest(
@@ -60,8 +89,19 @@ def test_qc_does_not_publish_after_selected_render_changes(monkeypatch, tmp_path
         return recognition
     monkeypatch.setattr(asr_backend, 'run_transcribe_guarded', guarded)
 
-    run = lambda: asyncio.run(dub_export.dub_qc_pass('qc-race', lang='es', drift_threshold=.5))
-    if change is None:
+    async def exercise():
+        try:
+            result = await dub_export.dub_qc_pass('qc-race', lang='es', drift_threshold=.5)
+            if held_worker:
+                await asyncio.gather(*held_worker)
+            return result
+        finally:
+            for release in release_worker:
+                release.set()
+            if held_worker:
+                await asyncio.gather(*held_worker, return_exceptions=True)
+    run = lambda: asyncio.run(exercise())
+    if change in {None, 'publication_wait'}:
         assert run()['flagged_count'] == 0
         assert job['segments'][0]['qc_drift'] == 0
         saved.assert_called_once()

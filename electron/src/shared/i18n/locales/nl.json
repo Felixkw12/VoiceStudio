@@ -1283,6 +1283,7 @@
     "qc_track_changed": "De nasynchronisatie is tijdens de kwaliteitscontrole gewijzigd. Voer de controle opnieuw uit op het huidige spoor.",
     "qc_identity_missing": "De segmenten zijn niet eenduidig te identificeren. Genereer dit spoor opnieuw met unieke segment-ID’s.",
     "source_changed": "De ondertitels zijn gewijzigd tijdens het genereren. Genereer opnieuw om de huidige ondertitels te gebruiken.",
+    "transcription_source_changed": "De ondertitels zijn tijdens de transcriptie gewijzigd. Je wijzigingen zijn behouden.",
     "paste_translation_btn": "Vertaling plakken",
     "paste_translation_title": "Een vertaling plakken",
     "paste_translation_desc": "Plak een elders gemaakte vertaling (ChatGPT, DeepL, een menselijke vertaler). Die wordt op je bestaande segmenten toegepast — timings en het originele transcript blijven ongewijzigd.",

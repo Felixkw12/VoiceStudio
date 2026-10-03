@@ -27,6 +27,8 @@ moving them is a follow-up.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import hashlib
 import json
 import logging
@@ -303,6 +305,32 @@ def find_cached_job(content_hash: str, exclude_job_id: str) -> Optional[dict]:
 # ── Job state (in-memory + SQLite fallback) ────────────────────────────────
 
 
+async def run_job_operation(operation, *args, **kwargs):
+    """Wait for blocking job work to settle before cancellation can clean up.
+
+    The shared lock may be held during audio replacement and SQLite writes.
+    Async callers must acquire it in a worker, retaining that worker through
+    cancellation so it cannot publish after the caller removes its files.
+    """
+    work = functools.partial(operation, *args, **kwargs)
+    pending = asyncio.get_running_loop().run_in_executor(
+        None, contextvars.copy_context().run, work,
+    )
+    try:
+        return await asyncio.shield(pending)
+    except (asyncio.CancelledError, GeneratorExit):
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not pending.cancelled():
+            pending.exception()
+        raise
+
+
 def get_job(job_id: str) -> Optional[dict]:
     """Look up a job. Checks the in-memory cache first, then falls back to
     `dub_history.job_data` so saved projects still resolve after restart.
@@ -448,8 +476,8 @@ def merge_and_save_job(
     WAL, but up to sqlite3's 5 s default busy timeout if another writer is
     holding the write lock. The alternative — releasing the lock before the
     write — is the resurrection race this exists to close, so a rare latency
-    blip is the better trade. No locked region here calls another locked
-    function, so the plain (non-reentrant) ``_dub_jobs_lock`` cannot deadlock.
+    blip is the better trade. Async callers dispatch this operation to a
+    worker; the reentrant job lock also covers the nested save.
     """
     with _dub_jobs_lock:
         job = _dub_jobs.get(job_id)
@@ -1297,8 +1325,8 @@ async def ingest_pipeline(
     input_type = (source.get("input_type") or "video").lower()
     # Declare the run so a "clear history" arriving before this job's first
     # persistence can still withdraw it (#1252 review).
-    begin_ingest(job_id)
     try:
+        await run_job_operation(begin_ingest, job_id)
         if source.get("kind") == "url":
             url = source["url"]
             fetch_subs = bool(source.get("fetch_subs"))
@@ -1500,7 +1528,7 @@ async def ingest_pipeline(
                 "input_type": input_type,
                 "source_lang_override": source.get("source_lang"),
             }
-            if not put_and_save_job(
+            if not await run_job_operation(put_and_save_job,
                 job_id, full_job, filename=filename, duration=dur, content_hash=content_hash,
             ):
                 logger.info("Dub job %s was deleted during ingest — discarding its result", log_safe(job_id))
@@ -1529,7 +1557,7 @@ async def ingest_pipeline(
                 "input_type": input_type,
                 "source_lang_override": source.get("source_lang"),
             }
-            if not put_and_save_job(
+            if not await run_job_operation(put_and_save_job,
                 job_id, partial, filename=filename, duration=dur, content_hash=content_hash,
             ):
                 logger.info("Dub job %s was deleted during ingest — discarding its result", log_safe(job_id))
@@ -1635,7 +1663,7 @@ async def ingest_pipeline(
             # Merge and persist as one step: a delete landing BETWEEN them
             # would remove the row and then have it written straight back, so
             # the dub the user deleted reappears in history (#1252 review).
-            if not merge_and_save_job(
+            if not await run_job_operation(merge_and_save_job,
                 job_id,
                 {
                     "vocals_path": vocals_path,
@@ -1674,6 +1702,6 @@ async def ingest_pipeline(
         # cancellation; never copy it into the project/job directory.
         cookie_file = source.get("cookie_file")
         _delete_cookie_export(cookie_file)
-        end_ingest(job_id)
+        await run_job_operation(end_ingest, job_id)
         with _active_procs_lock:
             _active_procs.pop(job_id, None)

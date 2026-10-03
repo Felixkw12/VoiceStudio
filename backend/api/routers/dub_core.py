@@ -2,6 +2,8 @@ import os
 import errno
 import uuid
 import asyncio
+import copy
+import threading
 import logging
 import shutil
 import subprocess
@@ -258,6 +260,58 @@ def dub_parse_subtitle_text(req: ParseSubtitleTextRequest):
     }
 
 
+def _transcription_source(job):
+    """Source edits invalidate ASR, while derived QC and completed tracks do not."""
+    snapshot = {key: copy.deepcopy(job.get(key)) for key in (
+        "segments", "source_lang_override", "segment_clones", "speaker_clones",
+        "cast_sources", "per_segment_refs",
+    )}
+    if isinstance(snapshot["segments"], list):
+        snapshot["segments"] = [
+            {key: value for key, value in row.items() if not key.startswith("qc_")}
+            if isinstance(row, dict) else row for row in snapshot["segments"]
+        ]
+    return snapshot
+
+
+def _transcription_snapshot(job_id):
+    with dub_pipeline._dub_jobs_lock:
+        job = _get_job(job_id)
+        return job, _transcription_source(job) if job else None
+
+
+def _publish_transcription(job_id, job, source_snapshot, updates, cancelled):
+    with dub_pipeline._dub_jobs_lock:
+        if cancelled.is_set():
+            return
+        if _get_job(job_id) is not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.get("aborted"):
+            raise HTTPException(status_code=499, detail="Transcription aborted")
+        if _transcription_source(job) != source_snapshot:
+            raise HTTPException(status_code=409, detail={
+                "code": "dub_transcription_source_changed",
+                "message": "Subtitles changed during transcription. Your edits were kept.",
+            })
+        job.update(updates)
+        _save_job(job_id, job)
+
+
+async def _save_transcription(job_id, job, source_snapshot, updates):
+    """Wait for the publication lock off-loop; cancelled queued work stays private."""
+    cancelled = threading.Event()
+    try:
+        await asyncio.to_thread(_publish_transcription, job_id, job, source_snapshot, updates, cancelled)
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
+
+
+def _mark_job_aborted(job):
+    with dub_pipeline._dub_jobs_lock:
+        job["aborted"] = True
+
+
 @router.post("/dub/import-srt/{job_id}")
 async def dub_import_srt(job_id: str, file: UploadFile = File(...)):
     """Replace `job["segments"]` with timestamps + text parsed from an SRT
@@ -268,7 +322,7 @@ async def dub_import_srt(job_id: str, file: UploadFile = File(...)):
     re-time (overlap shifts). The caller surfaces these so the user knows
     if the import wasn't lossless.
     """
-    if not _get_job(job_id):
+    if not await asyncio.to_thread(_get_job, job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     try:
         raw_bytes = await file.read()
@@ -1279,7 +1333,7 @@ async def dub_transcribe_stream(
         from core.run_sentinel import touch_activity
         touch_activity("transcribe", "dub")
 
-        job = _get_job(job_id)
+        job, source_snapshot = await asyncio.to_thread(_transcription_snapshot, job_id)
 
         # The durable job is written before the terminal SSE events below. If
         # the renderer, proxy, or backend connection drops in that narrow
@@ -2205,14 +2259,10 @@ async def dub_transcribe_stream(
         except Exception as e:
             logger.warning("speaker_clone extraction skipped: %s", e)
 
-        with dub_pipeline._dub_jobs_lock:
-            if _get_job(job_id) is not job:
-                raise HTTPException(status_code=404, detail="Job not found")
-            source_updates["source_lang"] = job.get("source_lang_override") or _detected_source_lang(detected_lang)
-            source_updates["full_transcript"] = " ".join(s.get("text", "") for s in final_segs)
-            source_updates["transcription_complete"] = True
-            job.update(source_updates)
-            _save_job(job_id, job)
+        source_updates["source_lang"] = job.get("source_lang_override") or _detected_source_lang(detected_lang)
+        source_updates["full_transcript"] = " ".join(s.get("text", "") for s in final_segs)
+        source_updates["transcription_complete"] = True
+        await _save_transcription(job_id, job, source_snapshot, source_updates)
 
         # Restore TTS model to GPU now that ASR is done. unload() blocks
         # (gc.collect + CUDA cache drop) — run it on the GPU pool so the
@@ -2277,7 +2327,10 @@ async def dub_transcribe_stream(
         except Exception as exc:  # noqa: BLE001 — last-resort stream finalizer
             logger.error("Transcription stream failed unexpectedly (class=%s)", type(exc).__name__)
             from core.public_errors import stream_failure, transcription_failure_code
-            yield _sse_event("error", stream_failure(transcription_failure_code(exc)))
+            if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) and exc.detail.get("code") == "dub_transcription_source_changed":
+                yield _sse_event("error", {"error_code": exc.detail["code"], "error": exc.detail["message"]})
+            else:
+                yield _sse_event("error", stream_failure(transcription_failure_code(exc)))
             yield _sse_event("done", {})
         finally:
             _asr_work.stop()
@@ -2341,7 +2394,7 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
     heuristic when pyannote is unavailable. None → auto-detect.
     """
     num_speakers = _clamp_num_speakers(num_speakers)
-    job = _get_job(job_id)
+    job, source_snapshot = await asyncio.to_thread(_transcription_snapshot, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     # Same as the streaming preflight: the only use of the TTS core here is the
@@ -2484,20 +2537,15 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
             # retry cannot overlap it (#1669).
             segments_result = await run_transcribe_guarded(_gpu_pool, _transcribe, what="Dub")
         except asyncio.CancelledError:
-            with dub_pipeline._dub_jobs_lock:
-                job["aborted"] = True
+            await asyncio.to_thread(_mark_job_aborted, job)
             raise
         if job.get("aborted"):
             raise HTTPException(status_code=499, detail="Transcription aborted")
         from services.segmentation import deduplicate_chunk_segments
         segments_result = deduplicate_chunk_segments(segments_result)
-        with dub_pipeline._dub_jobs_lock:
-            if _get_job(job_id) is not job:
-                raise HTTPException(status_code=404, detail="Job not found")
-            source_updates["segments"] = segments_result
-            job.update(source_updates)
-            source_lang = job.get("source_lang")
-            _save_job(job_id, job)
+        source_updates["segments"] = segments_result
+        await _save_transcription(job_id, job, source_snapshot, source_updates)
+        source_lang = job.get("source_lang")
         return {
             "job_id": job_id,
             "segments": segments_result,

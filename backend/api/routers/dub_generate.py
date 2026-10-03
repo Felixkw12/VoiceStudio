@@ -7,7 +7,6 @@ import time
 import asyncio
 import copy
 import contextlib
-import contextvars
 import shutil
 import tempfile
 import torch
@@ -83,25 +82,7 @@ def _install_dub_artifacts(staged: dict[str, str]):
 
 async def _finish_publication(publish):
     """Keep blocking commit work off-loop and retain its files until it settles."""
-    # Use an executor Future, not a detached Task: cancellation (including loop
-    # shutdown cancelling all Tasks) must not mark this work done while its
-    # thread is still installing or rolling back files in the staging directory.
-    pending = asyncio.get_running_loop().run_in_executor(
-        None, contextvars.copy_context().run, publish,
-    )
-    try:
-        return await asyncio.shield(pending)
-    except (asyncio.CancelledError, GeneratorExit):
-        while not pending.done():
-            try:
-                await asyncio.shield(pending)
-            except asyncio.CancelledError:
-                continue  # repeated cancellation still cannot release live files
-            except Exception:
-                break  # rollback finished; preserve the caller's cancellation
-        if not pending.cancelled():
-            pending.exception()  # observe a failure even while the caller exits
-        raise
+    return await dub_pipeline.run_job_operation(publish)
 
 
 class _RemoteDubBackend:
@@ -634,7 +615,7 @@ router = APIRouter()
 @router.post("/dub/generate/{job_id}")
 async def dub_generate(job_id: str, req: DubRequest):
     """Adds a dub generation job to the async batch task pool."""
-    job = _get_job(job_id)
+    job = await asyncio.to_thread(_get_job, job_id)
     if not job:
         raise HTTPException(
             status_code=404,
@@ -2056,7 +2037,7 @@ async def dub_generate(job_id: str, req: DubRequest):
 
             # Reject changed source before writing the staged track. The worker
             # revalidates under the job lock immediately before publication.
-            if _get_job(job_id) is not job or _render_source_segments(job) != source_segments:
+            if await asyncio.to_thread(_get_job, job_id) is not job or _render_source_segments(job) != source_segments:
                 yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"
                 return
             _t_save_0 = time.perf_counter()
@@ -2220,7 +2201,7 @@ async def dub_generate(job_id: str, req: DubRequest):
             f" regen={len(regen_only)}" if regen_only is not None else "",
         )
 
-        yield f"data: {json.dumps({'type': 'done', 'segments_processed': total, 'language_code': lang_code, 'tracks': list(job['dubbed_tracks'].keys()), 'sync_scores': sync_scores, 'fit_status': fit_status, 'timing_strategy': strategy, 'seg_hashes': job.get('seg_hashes', {}), 'seg_num_step': job.get('seg_num_step', {})})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'committed': True, 'segments_processed': total, 'language_code': lang_code, 'tracks': list(job['dubbed_tracks'].keys()), 'sync_scores': sync_scores, 'fit_status': fit_status, 'timing_strategy': strategy, 'seg_hashes': job.get('seg_hashes', {}), 'seg_num_step': job.get('seg_num_step', {})})}\n\n"
 
     async def _stream(task_id):
         job_dir = os.path.join(DUB_DIR, job_id)
@@ -2271,7 +2252,7 @@ async def preview_segment(job_id: str, req: SegmentPreviewRequest):
     so it carries the same invisible provenance mark as every other
     producer (#1169 — "no watermark" here used to be an exemption).
     """
-    job = _get_job(job_id)
+    job = await asyncio.to_thread(_get_job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 

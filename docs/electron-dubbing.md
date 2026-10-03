@@ -437,11 +437,16 @@ reference. Source validation, file installation and the
 strict database save share the job lock; a failed save rolls back the audio
 replacement. Once that publication transaction has started, cancellation
 waits for its commit or rollback before removing staging files. A completed
-commit stays published even if cancellation arrives during it. Deleting a job
+commit stays published and reports a completed task even if cancellation arrives
+during it. Async reads, export/QC updates and ingest persistence wait for the
+shared lock in workers, so they cannot prevent the event loop from handling
+cancellation while publication is waiting on disk. Deleting a job
 serializes with publication and cannot leave a resurrected history row.
 
 Subtitle imports re-read the current job when applying uploaded cues. Imports,
 caption cleanup, transcription source updates, and QC share the publication
 lock, so an edit arriving during publication is applied afterward. Transcription
 keeps new source fields private until completion and refuses to publish into a
-deleted or replaced job. Concurrently completed dub tracks are preserved.
+deleted or replaced job. If source text, timing or speaker assignments change
+during transcription, the result is rejected with a localized message and the
+newer edits remain intact. Concurrently completed dub tracks are preserved.

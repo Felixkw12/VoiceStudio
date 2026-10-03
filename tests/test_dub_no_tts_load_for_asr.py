@@ -145,7 +145,7 @@ def test_preflight_error_does_not_leave_asr_on_vocals_unbound(dub, monkeypatch):
     assert "No audio available" in body
 
 
-@pytest.mark.parametrize('outcome', ['complete', 'deleted', 'replaced', 'failed', 'cancelled'])
+@pytest.mark.parametrize('outcome', ['complete', 'deleted', 'replaced', 'failed', 'cancelled', 'edited'])
 def test_transcription_publishes_private_source_without_replacing_tracks(dub, monkeypatch, outcome):
     from fastapi import HTTPException
 
@@ -167,6 +167,8 @@ def test_transcription_publishes_private_source_without_replacing_tracks(dub, mo
             monkeypatch.setattr(dc, '_get_job', lambda _: None)
         elif outcome == 'replaced':
             dc._dub_jobs[job_id] = {'segments': [], 'replacement': True}
+        elif outcome == 'edited':
+            job['segments'] = [dict(original_segments[0], text='imported correction')]
         elif outcome == 'failed':
             raise RuntimeError('injected ASR completion failure')
         elif outcome == 'cancelled':
@@ -185,7 +187,63 @@ def test_transcription_publishes_private_source_without_replacing_tracks(dub, mo
             asyncio.run(dc.dub_transcribe(job_id))
         if outcome in ('deleted', 'replaced'):
             assert error.value.status_code == 404
-        assert job['segments'] == original_segments
+        if outcome == 'edited':
+            assert error.value.status_code == 409
+            assert job['segments'][0]['text'] == 'imported correction'
+        else:
+            assert job['segments'] == original_segments
         assert job['source_lang'] == 'old'
         if outcome == 'replaced':
             assert dc._dub_jobs[job_id] == {'segments': [], 'replacement': True}
+
+
+def test_cancelled_transcription_waiting_for_publication_keeps_source_private(dub, monkeypatch):
+    import threading
+
+    dc, job_id, _ = dub
+    job = dc._dub_jobs[job_id]
+    job['segments'] = [{'id': 0, 'start': 0, 'end': .5, 'text': 'original'}]
+    original = dc._transcription_source(job)
+    release = threading.Event()
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        held, contended, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        original_lock = dc.dub_pipeline._dub_jobs_lock
+        class Lock:
+            def __enter__(self):
+                if not original_lock.acquire(blocking=False):
+                    loop.call_soon_threadsafe(contended.set)
+                    original_lock.acquire()
+                return self
+            def __exit__(self, *_):
+                original_lock.release()
+        monkeypatch.setattr(dc.dub_pipeline, '_dub_jobs_lock', Lock())
+        publish = dc._publish_transcription
+        def observed_publish(*args):
+            try:
+                return publish(*args)
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+        monkeypatch.setattr(dc, '_publish_transcription', observed_publish)
+        def holder():
+            with original_lock:
+                loop.call_soon_threadsafe(held.set)
+                assert release.wait(2)
+        holding = loop.run_in_executor(None, holder)
+        await held.wait()
+        saving = asyncio.create_task(dc._save_transcription(
+            job_id, job, original, {'segments': [{'text': 'cancelled ASR'}]},
+        ))
+        try:
+            await asyncio.wait_for(contended.wait(), 10)
+            saving.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await saving
+            release.set()
+            await asyncio.wait_for(finished.wait(), 10)
+            await holding
+            assert dc._transcription_source(job) == original
+        finally:
+            release.set()
+            await asyncio.gather(saving, holding, return_exceptions=True)
+    asyncio.run(exercise())
