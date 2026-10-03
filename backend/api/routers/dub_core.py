@@ -270,8 +270,7 @@ async def dub_import_srt(job_id: str, file: UploadFile = File(...)):
     re-time (overlap shifts). The caller surfaces these so the user knows
     if the import wasn't lossless.
     """
-    job = _get_job(job_id)
-    if not job:
+    if not _get_job(job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     try:
         raw_bytes = await file.read()
@@ -296,68 +295,78 @@ async def dub_import_srt(job_id: str, file: UploadFile = File(...)):
             ),
         )
 
-    # Clamp cues that run past the source media's known duration. Pipeline
-    # downstream code assumes segment.end <= duration; without this, dub
-    # generation would try to time-stretch into negative slack.
-    duration = float(job.get("duration") or 0.0)
-    clamped = 0
-    if duration > 0:
-        kept = []
-        for seg in result.segments:
-            if seg["start"] >= duration:
-                continue
-            if seg["end"] > duration:
-                seg = {**seg, "end": round(duration, 3)}
-                clamped += 1
-            kept.append(seg)
-        # Re-id after clamp drops.
-        segments = [{**s, "id": i} for i, s in enumerate(kept)]
-    else:
-        segments = result.segments
+    # Upload reads may suspend while a render publishes. Resolve the current
+    # job only when applying parsed cues, with the same lock as publication.
+    return await asyncio.to_thread(_apply_imported_srt, job_id, result)
 
-    prior_segments = [
-        segment for segment in (job.get("segments") or []) if isinstance(segment, dict)
-    ]
-    segments, segment_clones = _carry_srt_voice_metadata(
-        segments,
-        prior_segments,
-        job.get("segment_clones"),
-        job.get("speaker_clones"),
-    )
-    job["segments"] = segments
-    job["segment_clones"] = segment_clones
-    # A pooled speaker clone is keyed only by a display label. Replacement
-    # cues can reuse that label without overlapping the original speaker, so
-    # retain matched pooled references as segment-specific clones above and
-    # drop the global map before rebuilding the cast.
-    job["speaker_clones"] = {}
-    if segment_clones:
-        from services.speaker_clone import build_cast_sources
 
-        job["cast_sources"] = build_cast_sources(
+def _apply_imported_srt(job_id, result):
+    with dub_pipeline._dub_jobs_lock:
+        job = _get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        # Clamp cues that run past the source media's known duration. Pipeline
+        # downstream code assumes segment.end <= duration; without this, dub
+        # generation would try to time-stretch into negative slack.
+        duration = float(job.get("duration") or 0.0)
+        clamped = 0
+        if duration > 0:
+            kept = []
+            for seg in result.segments:
+                if seg["start"] >= duration:
+                    continue
+                if seg["end"] > duration:
+                    seg = {**seg, "end": round(duration, 3)}
+                    clamped += 1
+                kept.append(seg)
+            # Re-id after clamp drops.
+            segments = [{**s, "id": i} for i, s in enumerate(kept)]
+        else:
+            segments = result.segments
+
+        prior_segments = [
+            segment for segment in (job.get("segments") or []) if isinstance(segment, dict)
+        ]
+        segments, segment_clones = _carry_srt_voice_metadata(
             segments,
-            None,
-            segment_clones,
+            prior_segments,
+            job.get("segment_clones"),
+            job.get("speaker_clones"),
         )
-    else:
-        job.pop("cast_sources", None)
-    # `source_lang` stays whatever the user (or the upload step) set; we
-    # don't try to language-detect off the cue text — that's noisy and the
-    # user usually knows what their .srt is.
-    _save_job(job_id, job)
-    logger.info(
-        "Imported %d cue(s) from .srt for job %s (skipped=%d, overlap_shifted=%d, clamped=%d)",
-        len(segments), log_safe(job_id), result.skipped_cues, result.dropped_overlaps, clamped,
-    )
-    return {
-        "segments": segments,
-        "stats": {
-            "imported": len(segments),
-            "skipped_malformed": result.skipped_cues,
-            "dropped_overlap": result.dropped_overlaps,
-            "clamped_to_duration": clamped,
-        },
-    }
+        job["segments"] = segments
+        job["segment_clones"] = segment_clones
+        # A pooled speaker clone is keyed only by a display label. Replacement
+        # cues can reuse that label without overlapping the original speaker, so
+        # retain matched pooled references as segment-specific clones above and
+        # drop the global map before rebuilding the cast.
+        job["speaker_clones"] = {}
+        if segment_clones:
+            from services.speaker_clone import build_cast_sources
+
+            job["cast_sources"] = build_cast_sources(
+                segments,
+                None,
+                segment_clones,
+            )
+        else:
+            job.pop("cast_sources", None)
+        # `source_lang` stays whatever the user (or the upload step) set; we
+        # don't try to language-detect off the cue text — that's noisy and the
+        # user usually knows what their .srt is.
+        _save_job(job_id, job)
+        logger.info(
+            "Imported %d cue(s) from .srt for job %s (skipped=%d, overlap_shifted=%d, clamped=%d)",
+            len(segments), log_safe(job_id), result.skipped_cues, result.dropped_overlaps, clamped,
+        )
+        return {
+            "segments": segments,
+            "stats": {
+                "imported": len(segments),
+                "skipped_malformed": result.skipped_cues,
+                "dropped_overlap": result.dropped_overlaps,
+                "clamped_to_duration": clamped,
+            },
+        }
 
 
 def _select_downloaded_caption_track(
@@ -468,42 +477,43 @@ def _prepare_downloaded_caption_segments(cues: list[dict], duration: float) -> l
 @router.post("/dub/use-downloaded-captions/{job_id}")
 def dub_use_downloaded_captions(job_id: str):
     """Seed a prepared Dub job from its downloaded caption track."""
-    job = _get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    tracks = job.get("youtube_subs")
-    if not isinstance(tracks, dict):
-        raise HTTPException(status_code=404, detail="No downloaded captions are available")
-    caption_lang = _select_downloaded_caption_track(
-        tracks,
-        job.get("source_lang_override") or job.get("source_lang"),
-    )
-    if caption_lang is None:
-        raise HTTPException(status_code=404, detail="No downloaded captions are available")
-    segments = _prepare_downloaded_caption_segments(
-        tracks[caption_lang],
-        float(job.get("duration") or 0.0),
-    )
-    if not segments:
-        raise HTTPException(status_code=422, detail="Downloaded captions contain no usable cues")
+    with dub_pipeline._dub_jobs_lock:
+        job = _get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        tracks = job.get("youtube_subs")
+        if not isinstance(tracks, dict):
+            raise HTTPException(status_code=404, detail="No downloaded captions are available")
+        caption_lang = _select_downloaded_caption_track(
+            tracks,
+            job.get("source_lang_override") or job.get("source_lang"),
+        )
+        if caption_lang is None:
+            raise HTTPException(status_code=404, detail="No downloaded captions are available")
+        segments = _prepare_downloaded_caption_segments(
+            tracks[caption_lang],
+            float(job.get("duration") or 0.0),
+        )
+        if not segments:
+            raise HTTPException(status_code=422, detail="Downloaded captions contain no usable cues")
 
-    source_lang = job.get("source_lang_override") or _detected_source_lang(caption_lang)
-    job["segments"] = segments
-    job["source_lang"] = source_lang
-    job["full_transcript"] = " ".join(segment["text"] for segment in segments)
-    # Caption files contain timing and text, but no trustworthy speaker or
-    # reference-audio attribution. Never retain stale clone maps from a prior
-    # transcript on the same job.
-    job["segment_clones"] = {}
-    job["speaker_clones"] = {}
-    job.pop("cast_sources", None)
-    _save_job(job_id, job)
-    return {
-        "segments": segments,
-        "source_lang": source_lang,
-        "caption_lang": caption_lang,
-        "available": sorted(tracks.keys()),
-    }
+        source_lang = job.get("source_lang_override") or _detected_source_lang(caption_lang)
+        job["segments"] = segments
+        job["source_lang"] = source_lang
+        job["full_transcript"] = " ".join(segment["text"] for segment in segments)
+        # Caption files contain timing and text, but no trustworthy speaker or
+        # reference-audio attribution. Never retain stale clone maps from a prior
+        # transcript on the same job.
+        job["segment_clones"] = {}
+        job["speaker_clones"] = {}
+        job.pop("cast_sources", None)
+        _save_job(job_id, job)
+        return {
+            "segments": segments,
+            "source_lang": source_lang,
+            "caption_lang": caption_lang,
+            "available": sorted(tracks.keys()),
+        }
 
 
 @router.post("/dub/cleanup-segments/{job_id}")
@@ -516,17 +526,18 @@ def dub_cleanup_segments(job_id: str, req: Optional[CleanupSegmentsRequest] = No
     like any other, and the job keeps the segments its existing audio and
     subtitle exports were generated from until the next generation.
     """
-    job = _get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if req is not None:
-        cleaned = clean_up_segments(req.segments)
-        return {"segments": cleaned, "before": len(req.segments), "after": len(cleaned)}
-    segments = job.get("segments") or []
-    cleaned = clean_up_segments(segments)
-    job["segments"] = cleaned
-    _save_job(job_id, job)
-    return {"segments": cleaned, "before": len(segments), "after": len(cleaned)}
+    with dub_pipeline._dub_jobs_lock:
+        job = _get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if req is not None:
+            cleaned = clean_up_segments(req.segments)
+            return {"segments": cleaned, "before": len(req.segments), "after": len(cleaned)}
+        segments = job.get("segments") or []
+        cleaned = clean_up_segments(segments)
+        job["segments"] = cleaned
+        _save_job(job_id, job)
+        return {"segments": cleaned, "before": len(segments), "after": len(cleaned)}
 
 
 @router.post("/dub/abort/{job_id}")
@@ -543,9 +554,10 @@ def dub_abort(job_id: str):
             status_code=503,
             detail="The dub could not be fully aborted. Retry the abort operation.",
         ) from exc
-    job = _dub_jobs.get(job_id)
-    if job is not None:
-        job["aborted"] = True
+    with dub_pipeline._dub_jobs_lock:
+        job = _dub_jobs.get(job_id)
+        if job is not None:
+            job["aborted"] = True
     # Cancellation is idempotent: a missing active task means it already
     # stopped between the renderer aborting its stream and this request.
     return {
@@ -2043,7 +2055,7 @@ async def dub_transcribe_stream(
 
         from services.segmentation import deduplicate_chunk_segments
         final_segs = deduplicate_chunk_segments(final_segs)
-        job["segments"] = final_segs
+        source_updates = {"segments": final_segs}
 
         # Auto-speaker-clone: sample each detected speaker's voice from the
         # Demucs-isolated vocals track and assign `auto:speaker_N` as the
@@ -2120,7 +2132,7 @@ async def dub_transcribe_stream(
             # per-speaker clone below. Default on; the user can force
             # per-speaker by disabling it (job["per_segment_refs"]).
             seg_clones = {}
-            job["per_segment_refs"] = per_segment_refs
+            source_updates["per_segment_refs"] = per_segment_refs
             if per_segment_refs:
                 try:
                     from services.speaker_clone import extract_segment_refs
@@ -2159,15 +2171,15 @@ async def dub_transcribe_stream(
                             logger.warning(
                                 "segment ref-text refine timed out; keeping original ref_text: %s", e
                             )
-                        job["segment_clones"] = seg_clones
+                        source_updates["segment_clones"] = seg_clones
                 except Exception as e:
                     logger.warning("per-segment clone refs skipped: %s", e)
 
             cast_sources = build_cast_sources(final_segs, clones, seg_clones)
-            job["cast_sources"] = cast_sources
+            source_updates["cast_sources"] = cast_sources
             if cast_sources:
                 if clones:
-                    job["speaker_clones"] = clones
+                    source_updates["speaker_clones"] = clones
                 # Default each segment's profile_id to its detected speaker's
                 # auto-clone — but only if the user hasn't already assigned
                 # something. (#486)
@@ -2195,12 +2207,14 @@ async def dub_transcribe_stream(
         except Exception as e:
             logger.warning("speaker_clone extraction skipped: %s", e)
 
-        job["source_lang"] = job.get("source_lang_override") or _detected_source_lang(
-            detected_lang
-        )
-        job["full_transcript"] = " ".join(s.get("text", "") for s in final_segs)
-        job["transcription_complete"] = True
-        _save_job(job_id, job)
+        with dub_pipeline._dub_jobs_lock:
+            if _get_job(job_id) is not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            source_updates["source_lang"] = job.get("source_lang_override") or _detected_source_lang(detected_lang)
+            source_updates["full_transcript"] = " ".join(s.get("text", "") for s in final_segs)
+            source_updates["transcription_complete"] = True
+            job.update(source_updates)
+            _save_job(job_id, job)
 
         # Restore TTS model to GPU now that ASR is done. unload() blocks
         # (gc.collect + CUDA cache drop) — run it on the GPU pool so the
@@ -2337,6 +2351,7 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
     # OMNIVOICE_PRELOAD_TTS_ASR — and when it is off, that branch raises "fallback
     # is not preloaded" anyway. Loading ~3 GB to reach a None attribute (and then
     # having offload_tts_for_asr free it) was pure cost.
+    source_updates = {}
     _model = await get_model() if should_preload_tts_asr() else None
 
     # TTS-only install: no ASR model on disk → typed 409 with a download CTA,
@@ -2407,7 +2422,7 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
             except Exception as e:
                 logger.warning("Failed to unload ASR backend: %s", e)
 
-        job["source_lang"] = job.get("source_lang_override") or _detected_source_lang(
+        source_updates["source_lang"] = job.get("source_lang_override") or _detected_source_lang(
             detected_lang
         )
 
@@ -2452,7 +2467,7 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
 
         for s in segments:
             s.setdefault("text_original", s.get("text", ""))
-        job["full_transcript"] = " ".join(s["text"] for s in segments)
+        source_updates["full_transcript"] = " ".join(s["text"] for s in segments)
 
         # Transcription is done with the resident TTS model still offloaded;
         # release the accelerator cache the offload freed, on whichever
@@ -2471,15 +2486,20 @@ async def dub_transcribe(job_id: str, num_speakers: Optional[int] = None):
             # retry cannot overlap it (#1669).
             segments_result = await run_transcribe_guarded(_gpu_pool, _transcribe, what="Dub")
         except asyncio.CancelledError:
-            job["aborted"] = True
+            with dub_pipeline._dub_jobs_lock:
+                job["aborted"] = True
             raise
         if job.get("aborted"):
             raise HTTPException(status_code=499, detail="Transcription aborted")
         from services.segmentation import deduplicate_chunk_segments
         segments_result = deduplicate_chunk_segments(segments_result)
-        job["segments"] = segments_result
-        source_lang = job.get("source_lang")
-        _save_job(job_id, job)
+        with dub_pipeline._dub_jobs_lock:
+            if _get_job(job_id) is not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            source_updates["segments"] = segments_result
+            job.update(source_updates)
+            source_lang = job.get("source_lang")
+            _save_job(job_id, job)
         return {
             "job_id": job_id,
             "segments": segments_result,

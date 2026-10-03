@@ -410,16 +410,30 @@ runs. If the track, transcript, timing, or audio changes during that pass, QC
 asks you to run it again instead of publishing stale scores. Deleting the job
 during QC also discards the result and keeps it out of history.
 
-Generation revalidates its segment text and identity snapshot after synthesis, before publishing fingerprints or replacing the previous track. An identity collision caused by a concurrent edit is reported through the task stream; the previous track and published metadata remain available. The source snapshot is checked again after asynchronous fitting and before replacing audio: subtitle imports made during generation or assembly survive, and the user can regenerate from the corrected subtitles. Fresh segment WAVs and the assembled track stay in a private staging directory until this check passes. Rejection or cancellation removes the staging files and preserves the reusable segment cache. Publication backs up existing files and rolls back ordinary installation failures; it does not promise a multi-file transaction across power loss. Fingerprints and the segment manifest publish only with a completed track. Empty generation requests are rejected before loading a voice engine.
+Generation revalidates its segment text and identity snapshot after synthesis, before publishing fingerprints or replacing the previous track. An identity collision caused by a concurrent edit is reported through the task stream; the previous track and published metadata remain available. The source snapshot is checked again after asynchronous fitting and before replacing audio: subtitle imports made during generation or assembly survive, and the user can regenerate from the corrected subtitles. Fresh segment WAVs and the assembled track stay in a private staging directory until this check passes. Rejection or cancellation before publication removes the staging files and preserves the reusable segment cache. Publication backs up existing files and rolls back ordinary installation failures; it does not promise a multi-file transaction across power loss. Fingerprints and the segment manifest publish only with a completed track. Empty generation requests are rejected before loading a voice engine.
 
 QC annotations arriving during generation do not count as source edits: a completed
 render can still publish. Publishing replacement audio clears QC annotations measured
 against the old audio; a failed publication retains the old track and its QC. Source text, timing, identity,
 voice bindings, and imported-cue changes still invalidate the admitted snapshot.
 
-Cancelling or failing a render preserves the previous committed track and its
-segment cache. Newly synthesized, unpublished segments are discarded and must be
+Cancellation before publication or a failed render preserves the previous
+committed track and its segment cache. Newly synthesized, unpublished segments are discarded and must be
 synthesized again on retry. Resume reconnects to an existing running task; it does
 not recover a cancelled task's unpublished speech. Reusing that speech would require
 a separate resume cache with validated engine and reference revisions, rather than
 replacing the committed cache with partial output.
+
+Track publication runs in a worker thread so file backups and SQLite waits do
+not occupy the async event loop. Source validation, file installation and the
+strict database save share the job lock; a failed save rolls back the audio
+replacement. Once that publication transaction has started, cancellation
+waits for its commit or rollback before removing staging files. A completed
+commit stays published even if cancellation arrives during it. Deleting a job
+serializes with publication and cannot leave a resurrected history row.
+
+Subtitle imports re-read the current job when applying uploaded cues. Imports,
+caption cleanup, transcription source updates, and QC share the publication
+lock, so an edit arriving during publication is applied afterward. Transcription
+keeps new source fields private until completion and refuses to publish into a
+deleted or replaced job. Concurrently completed dub tracks are preserved.

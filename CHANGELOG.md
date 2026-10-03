@@ -87,6 +87,7 @@ metadata and the backend fallback mirror it.
 - The Twilio guide and integration directory describe the guided setup and in-app integration pages (#2304)
 
 ### Fixed
+- Dub publication keeps file and database work off the event loop, waits safely on cancellation, and restores audio after save failures (#2585)
 - Dubbing finishes when quality-check annotations arrive during assembly and clears measurements of replaced audio while still protecting subtitle edits (#2585)
 
 - Saving a voice design skips cold engine loading and downloads, including when a warm engine unloads during the save (#2583) — thanks @simoncheese!

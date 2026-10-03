@@ -18,6 +18,7 @@ from core.path_security import UnsafePath, portable_filename, resolve_within
 from core.tasks import task_manager
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
+from services.dub_pipeline import _dub_jobs_lock
 from services.ffmpeg_utils import (
     bed_mix_filter,
     explain_ffmpeg_failure,
@@ -862,7 +863,8 @@ async def dub_download(
         )
         # A fresh export is a fresh user intent — clear any sticky abort flag
         # from a previous /dub/abort so it can't kill this run's first batch.
-        job.pop("aborted", None)
+        with _dub_jobs_lock:
+            job.pop("aborted", None)
         # realpath-normalised + containment-checked inline at the sink (the
         # file's established pattern — CodeQL does not track the guard
         # through a helper's return value).
@@ -888,7 +890,8 @@ async def dub_download(
                 raise HTTPException(status_code=409, detail="Export aborted")
             from core.failure import build_failure
             retime_warning = build_failure(e, stage="video-retime", include_diagnostic=False)
-            job["last_export_warning"] = {"type": "video_retime_fallback", **retime_warning}
+            with _dub_jobs_lock:
+                job["last_export_warning"] = {"type": "video_retime_fallback", **retime_warning}
             logger.exception(
                 "Smart Fit video retime failed for job %s — exporting "
                 "without per-segment retime",
@@ -1242,7 +1245,8 @@ async def dub_preview_video(
             smart_track_dur = float(
                 retime_entry.get("total_duration") or track_info.get("duration") or 0.0
             )
-            job.pop("aborted", None)  # fresh user intent — clear sticky abort
+            with _dub_jobs_lock:
+                job.pop("aborted", None)  # fresh user intent — clear sticky abort
             # realpath-normalised + containment-checked inline at the sink
             # (same pattern as preview_path above — _base is the realpath
             # of DUB_DIR from the top of this endpoint).
@@ -1688,7 +1692,7 @@ async def dub_qc_pass(job_id: str, lang: str = Query(None), drift_threshold: flo
     re-dub. The generated text stays authoritative (design delta from
     pyvideotrans, which overwrites subtitles)."""
     from services import dub_qc
-    from services.dub_pipeline import _dub_jobs_lock, put_and_save_job
+    from services.dub_pipeline import put_and_save_job
 
     _job_dir_or_400(job_id)
     lang = _safe_lang_or_400(lang)

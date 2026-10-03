@@ -7,6 +7,7 @@ import time
 import asyncio
 import copy
 import contextlib
+import contextvars
 import shutil
 import tempfile
 import torch
@@ -39,7 +40,8 @@ from services.fit_planner import FitParams, plan_fit
 from services.watermark import mark_synthetic
 from services.speaker_clone import auto_profile_id
 from services.segment_bundle import extract_segment_wavs
-from api.routers.dub_core import _get_job, _save_job
+from api.routers.dub_core import _get_job
+from services.dub_pipeline import save_job_strict as _save_job
 from omnivoice.utils.voice_design import heal_design_instruct
 
 logger = logging.getLogger("omnivoice.dub")
@@ -76,6 +78,29 @@ def _install_dub_artifacts(staged: dict[str, str]):
                 os.replace(backup, destination)
             else:
                 os.unlink(destination)
+        raise
+
+
+async def _finish_publication(publish):
+    """Keep blocking commit work off-loop and retain its files until it settles."""
+    # Use an executor Future, not a detached Task: cancellation (including loop
+    # shutdown cancelling all Tasks) must not mark this work done while its
+    # thread is still installing or rolling back files in the staging directory.
+    pending = asyncio.get_running_loop().run_in_executor(
+        None, contextvars.copy_context().run, publish,
+    )
+    try:
+        return await asyncio.shield(pending)
+    except (asyncio.CancelledError, GeneratorExit):
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                continue  # repeated cancellation still cannot release live files
+            except Exception:
+                break  # rollback finished; preserve the caller's cancellation
+        if not pending.cancelled():
+            pending.exception()  # observe a failure even while the caller exits
         raise
 
 
@@ -2029,8 +2054,8 @@ async def dub_generate(job_id: str, req: DubRequest):
                     pass
                 _release_audio_tensors()
 
-            # No await separates this final check from track/metadata publication.
-            # In particular, a subtitle import during asynchronous fitting wins.
+            # Reject changed source before writing the staged track. The worker
+            # revalidates under the job lock immediately before publication.
             if _get_job(job_id) is not job or _render_source_segments(job) != source_segments:
                 yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"
                 return
@@ -2072,6 +2097,8 @@ async def dub_generate(job_id: str, req: DubRequest):
         track_dur = total_samples / sr if total_samples > 0 else 0.0
         def publish():
             with dub_pipeline._dub_jobs_lock:
+                if task_manager.is_cancelled(task_id):
+                    return None  # cancellation won before publication started
                 if _get_job(job_id) is not job or _render_source_segments(job) != source_segments:
                     return False
                 published_job = copy.deepcopy(job)
@@ -2170,12 +2197,15 @@ async def dub_generate(job_id: str, req: DubRequest):
 
         _t_diskw_0 = time.perf_counter()
         try:
-            committed = publish()
+            committed = await _finish_publication(publish)
         except Exception as exc:
             from core.public_errors import stream_generation_failure
             logger.exception("Dub publication failed for job %s", log_safe(job_id))
             detail = stream_generation_failure(exc)["detail"]
             yield f"data: {json.dumps({'type': 'error', 'error': detail})}\n\n"
+            return
+        if committed is None:
+            yield f"data: {json.dumps({'type': 'cancelled', 'segments_processed': total})}\n\n"
             return
         if not committed:
             yield f"data: {json.dumps({'type': 'error', 'error_code': 'dub_source_changed', 'error': 'Subtitles changed during generation. Generate again to use the current subtitles.'})}\n\n"

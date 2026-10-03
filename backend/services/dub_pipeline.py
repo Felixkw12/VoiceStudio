@@ -488,9 +488,10 @@ def purge_jobs(job_ids, *, delete_rows, include_inflight: bool = False) -> None:
         _expire_withdrawn(now, protected=len(targets))
 
 
-def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, content_hash: str = "") -> None:
+def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, content_hash: str = "", *, strict: bool = False) -> None:
     """Persist dub job state to SQLite so it survives restarts. Uses UPSERT
     on `id` so repeated saves in a session keep the latest snapshot.
+    ``strict`` propagates failures when the caller must roll back audio files.
 
     language / language_code / content_hash only update when the incoming
     value is non-empty: the ingest-time insert runs before the target
@@ -507,14 +508,21 @@ def save_job(job_id: str, job: dict, filename: str = "", duration: float = 0.0, 
         # post-ingest save able to resurrect a dub the user deleted mid-render.
         # One choke point closes the class and the ninth caller inherits it.
         if job_id in _withdrawn_jobs:
+            if strict:
+                raise RuntimeError("Cannot publish a withdrawn dub job")
             logger.info(
                 "Dub job %s was deleted while it was still running — not persisting", log_safe(job_id),
             )
             return
-        _persist_job(job_id, job, filename, duration, content_hash)
+        _persist_job(job_id, job, filename, duration, content_hash, strict=strict)
 
 
-def _persist_job(job_id: str, job: dict, filename: str, duration: float, content_hash: str) -> None:
+def save_job_strict(job_id: str, job: dict) -> None:
+    """Persist a publication or raise so its staged artifacts can roll back."""
+    save_job(job_id, job, strict=True)
+
+
+def _persist_job(job_id: str, job: dict, filename: str, duration: float, content_hash: str, *, strict: bool = False) -> None:
     """The actual write. Callers go through :func:`save_job`, which gates it."""
     try:
         segments = job.get("segments") or []
@@ -540,6 +548,8 @@ def _persist_job(job_id: str, job: dict, filename: str, duration: float, content
             )
     except Exception as exc:
         logger.error("Failed to persist dub job %s: %s", log_safe(job_id), log_safe(exc))
+        if strict:
+            raise
         return
     event_bus.emit("dub_history", {"action": "saved", "id": job_id})
 

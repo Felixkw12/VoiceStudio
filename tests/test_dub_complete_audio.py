@@ -14,6 +14,7 @@ from schemas.requests import DubRequest
 @pytest.fixture
 def render_dub(monkeypatch, tmp_path):
     import api.routers.dub_generate as dg
+    real_save = dg._save_job
     job = {'duration': 4.0, 'dubbed_tracks': {}, 'segments': [], 'seg_wav_kind_by_lang': {'en': 'natural'}}
     path = tmp_path / 'job'
     path.mkdir()
@@ -41,12 +42,15 @@ def render_dub(monkeypatch, tmp_path):
     monkeypatch.setattr(dg, 'mark_synthetic', lambda a, *args, **kw: a)
     monkeypatch.setattr(dg, 'get_effect_chain', lambda _: None)
     monkeypatch.setattr(dg, 'normalize_audio', lambda a, **kw: a)
-    def run(**kwargs):
+    async def arun(**kwargs):
         body = dict(segments=[dict(start=0, end=1, text='hello')], segment_ids=['a'], language_code='en', num_step=4)
         body.update(kwargs)
-        asyncio.run(dg.dub_generate('job', DubRequest(**body)))
+        await dg.dub_generate('job', DubRequest(**body))
         return events
-    return SimpleNamespace(run=run, output=output, job=job, path=path, generated=generated)
+    def run(**kwargs):
+        return asyncio.run(arun(**kwargs))
+    return SimpleNamespace(run=run, arun=arun, real_save=real_save, output=output,
+                           job=job, path=path, generated=generated)
 
 
 def test_failed_segment_does_not_publish_complete_track(render_dub):
@@ -378,3 +382,234 @@ def test_qc_annotations_during_assembly_do_not_discard_render(render_dub, monkey
     assert not any(e.get('error_code') == 'dub_source_changed' for e in events)
     assert not any(key.startswith('qc_') for key in render_dub.job['segments'][0])
     assert render_dub.job['segments'][0]['text'] == 'hello'
+
+
+def test_publication_keeps_event_loop_responsive(render_dub, monkeypatch):
+    import threading
+    from api.routers import dub_generate as dg
+
+    release = threading.Event()
+    async def exercise():
+        entered = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        publishing_threads = []
+        def slow_save(*_):
+            publishing_threads.append(threading.get_ident())
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2), 'publisher blocked the event-loop releasing it'
+        monkeypatch.setattr(dg, '_save_job', slow_save)
+        render = asyncio.create_task(render_dub.arun())
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            assert not render.done(), 'event loop resumed only after blocking publication ended'
+            assert len(publishing_threads) == 1
+            assert publishing_threads[0] != threading.get_ident()
+            release.set()
+            events = await render
+            assert any(event['type'] == 'done' for event in events)
+        finally:
+            release.set()
+            await asyncio.gather(render, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('persist_fails', [False, True])
+def test_cancellation_waits_for_publication_before_staging_cleanup(render_dub, monkeypatch, persist_fails):
+    import threading
+    from api.routers import dub_generate as dg
+
+    previous = render_dub.path / 'dubbed_en.wav'
+    previous.write_bytes(b'previous complete track')
+    cache = render_dub.path / 'seg_en_a.wav'
+    sf.write(cache, [.2] * 24000, 24000)
+    cache_bytes = cache.read_bytes()
+    render_dub.job['dubbed_tracks']['en'] = {'path': str(previous)}
+    original = copy.deepcopy(render_dub.job)
+    release = threading.Event()
+    async def exercise():
+        entered = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        def slow_save(*_):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2), 'publisher blocked cancellation handling'
+            if persist_fails:
+                raise OSError('injected publication failure during cancellation')
+        monkeypatch.setattr(dg, '_save_job', slow_save)
+        render = asyncio.create_task(render_dub.arun())
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            assert not render.done()
+            for _ in range(2):
+                render.cancel()
+                await asyncio.sleep(0)
+                assert not render.done(), 'cancellation detached the in-flight publisher'
+                assert list(render_dub.path.glob('.render-*')), 'staging deleted under the publisher'
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await render
+        finally:
+            release.set()
+            await asyncio.gather(render, return_exceptions=True)
+    asyncio.run(exercise())
+    assert not list(render_dub.path.glob('.render-*'))
+    if persist_fails:
+        assert previous.read_bytes() == b'previous complete track'
+        assert cache.read_bytes() == cache_bytes
+        assert render_dub.job == original
+    else:
+        assert sf.info(previous).duration == 4
+        assert cache.read_bytes() != cache_bytes
+        assert render_dub.job['segments'][0]['text'] == 'hello'
+
+
+def test_sqlite_publication_failure_rolls_back_audio_and_metadata(render_dub, monkeypatch, tmp_path):
+    from collections import OrderedDict
+    from core import db
+    from services import dub_pipeline as dp
+    from api.routers import dub_generate as dg
+
+    monkeypatch.setattr(db, 'DB_PATH', str(tmp_path / 'publication.sqlite'))
+    monkeypatch.setattr(dp, '_withdrawn_jobs', OrderedDict())
+    with db.db_conn() as conn:
+        conn.executescript(db._BASE_SCHEMA)
+    previous = render_dub.path / 'dubbed_en.wav'
+    previous.write_bytes(b'previous complete track')
+    cache = render_dub.path / 'seg_en_a.wav'
+    sf.write(cache, [.2] * 24000, 24000)
+    cache_bytes = cache.read_bytes()
+    render_dub.job['dubbed_tracks']['en'] = {'path': str(previous)}
+    original = copy.deepcopy(render_dub.job)
+    dp.save_job('job', original)
+    with db.db_conn() as conn:
+        conn.execute("CREATE TRIGGER reject_render BEFORE UPDATE ON dub_history BEGIN SELECT RAISE(ABORT, 'injected SQLite failure'); END")
+    dp.save_job('job', original)  # normal callers still log and tolerate save failures
+    monkeypatch.setattr(dg, '_save_job', render_dub.real_save)
+    events = render_dub.run()
+    assert any(event['type'] == 'error' for event in events)
+    assert not any(event['type'] == 'done' for event in events)
+    assert previous.read_bytes() == b'previous complete track'
+    assert cache.read_bytes() == cache_bytes
+    assert render_dub.job == original
+    with db.db_conn() as conn:
+        assert json.loads(conn.execute('SELECT job_data FROM dub_history WHERE id=?', ('job',)).fetchone()[0]) == original
+    assert not list(render_dub.path.glob('.render-*'))
+
+
+@pytest.mark.parametrize('delete_before_publication', [False, True])
+def test_delete_serializes_with_publication_without_resurrecting_job(
+    render_dub, monkeypatch, tmp_path, delete_before_publication,
+):
+    import threading
+    from collections import OrderedDict
+    from core import db
+    from services import dub_pipeline as dp
+    from api.routers import dub_generate as dg
+
+    monkeypatch.setattr(db, 'DB_PATH', str(tmp_path / 'delete-publication.sqlite'))
+    monkeypatch.setattr(dp, '_dub_jobs', {'job': render_dub.job})
+    monkeypatch.setattr(dp, '_withdrawn_jobs', OrderedDict())
+    with db.db_conn() as conn:
+        conn.executescript(db._BASE_SCHEMA)
+    dp.save_job('job', render_dub.job)
+    monkeypatch.setattr(dg, '_get_job', dp.get_job)
+    release = threading.Event()
+    def delete():
+        def delete_rows():
+            with db.db_conn() as conn:
+                conn.execute('DELETE FROM dub_history WHERE id=?', ('job',))
+        dp.purge_jobs(['job'], delete_rows=delete_rows)
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        def slow_save(*args):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+            render_dub.real_save(*args)
+        monkeypatch.setattr(dg, '_save_job', slow_save)
+        if delete_before_publication:
+            finish = dg._finish_publication
+            async def delete_first(publish):
+                delete()
+                return await finish(publish)
+            monkeypatch.setattr(dg, '_finish_publication', delete_first)
+            events = await render_dub.arun()
+            assert any(event.get('error_code') == 'dub_source_changed' for event in events)
+            assert not (render_dub.path / 'dubbed_en.wav').exists()
+        else:
+            render = asyncio.create_task(render_dub.arun())
+            deletion = None
+            try:
+                await asyncio.wait_for(entered.wait(), 10)
+                deletion = loop.run_in_executor(None, delete)
+                await asyncio.sleep(0)
+                assert not deletion.done(), 'delete crossed the publication lock'
+                release.set()
+                await asyncio.gather(render, deletion)
+            finally:
+                release.set()
+                await asyncio.gather(render, *([deletion] if deletion else []), return_exceptions=True)
+    asyncio.run(exercise())
+    assert 'job' not in dp._dub_jobs
+    with db.db_conn() as conn:
+        assert conn.execute('SELECT id FROM dub_history WHERE id=?', ('job',)).fetchone() is None
+    assert not list(render_dub.path.glob('.render-*'))
+
+
+def test_cancel_before_publication_starts_discards_staging(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+
+    cancelled = [False]
+    monkeypatch.setattr(dg.task_manager, 'is_cancelled', lambda _: cancelled[0])
+    finish = dg._finish_publication
+    async def cancel_first(publish):
+        cancelled[0] = True
+        return await finish(publish)
+    monkeypatch.setattr(dg, '_finish_publication', cancel_first)
+    events = render_dub.run()
+    assert any(event['type'] == 'cancelled' for event in events)
+    assert not any(event['type'] == 'done' for event in events)
+    assert not render_dub.job['dubbed_tracks']
+    assert not (render_dub.path / 'dubbed_en.wav').exists()
+    assert not (render_dub.path / 'seg_en_a.wav').exists()
+    assert not list(render_dub.path.glob('.render-*'))
+
+
+def test_import_finishing_during_publication_preserves_new_subtitles(render_dub, monkeypatch):
+    import threading
+    from api.routers import dub_core, dub_generate as dg
+
+    release = threading.Event()
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        publishing = asyncio.Event()
+        reading = asyncio.Event()
+        read_finished = asyncio.Event()
+        class Upload:
+            async def read(self):
+                reading.set()
+                await publishing.wait()
+                read_finished.set()
+                return b'1\n00:00:00,000 --> 00:00:01,000\nreplacement subtitle\n'
+        def slow_save(*_):
+            loop.call_soon_threadsafe(publishing.set)
+            assert release.wait(2)
+        monkeypatch.setattr(dg, '_save_job', slow_save)
+        monkeypatch.setattr(dub_core, '_get_job', lambda _: render_dub.job)
+        monkeypatch.setattr(dub_core, '_save_job', lambda *_: None)
+        imported = asyncio.create_task(dub_core.dub_import_srt('job', Upload()))
+        await reading.wait()  # endpoint has started reading before publication
+        render = asyncio.create_task(render_dub.arun())
+        try:
+            await asyncio.wait_for(read_finished.wait(), 10)
+            await asyncio.sleep(0)
+            assert not imported.done(), 'import mutated the job during publication'
+            release.set()
+            events, result = await asyncio.gather(render, imported)
+            assert any(event['type'] == 'done' for event in events)
+            assert result['segments'][0]['text'] == 'replacement subtitle'
+            assert render_dub.job['segments'][0]['text'] == 'replacement subtitle'
+            assert 'en' in render_dub.job['dubbed_tracks']
+        finally:
+            release.set()
+            await asyncio.gather(render, imported, return_exceptions=True)
+    asyncio.run(exercise())

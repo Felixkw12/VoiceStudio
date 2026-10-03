@@ -143,3 +143,49 @@ def test_preflight_error_does_not_leave_asr_on_vocals_unbound(dub, monkeypatch):
     body = _drain(dc, job_id)
     assert "NameError" not in body
     assert "No audio available" in body
+
+
+@pytest.mark.parametrize('outcome', ['complete', 'deleted', 'replaced', 'failed', 'cancelled'])
+def test_transcription_publishes_private_source_without_replacing_tracks(dub, monkeypatch, outcome):
+    from fastapi import HTTPException
+
+    dc, job_id, _ = dub
+    job = dc._dub_jobs[job_id]
+    original_segments = [{'id': 0, 'start': 0, 'end': .5, 'text': 'previous source'}]
+    job.update(segments=original_segments, source_lang='old', full_transcript='previous source')
+    monkeypatch.setattr(dc, 'should_preload_tts_asr', lambda: False)
+    monkeypatch.setattr(dc, '_save_job', lambda *_: None)
+    async def guarded(_pool, transcribe, **_kwargs):
+        result = transcribe()  # actual ASR closure with the fixture's fake engine
+        assert job['segments'] == original_segments
+        assert job['source_lang'] == 'old', 'ASR exposed source metadata before commit'
+        assert job['full_transcript'] == 'previous source'
+        # A render can complete during ASR; keep its newly committed track.
+        job['dubbed_tracks']['en'] = {'path': 'concurrently-published.wav'}
+        if outcome == 'deleted':
+            dc._dub_jobs.pop(job_id)
+            monkeypatch.setattr(dc, '_get_job', lambda _: None)
+        elif outcome == 'replaced':
+            dc._dub_jobs[job_id] = {'segments': [], 'replacement': True}
+        elif outcome == 'failed':
+            raise RuntimeError('injected ASR completion failure')
+        elif outcome == 'cancelled':
+            raise asyncio.CancelledError()
+        return result
+    monkeypatch.setattr(dc, 'run_transcribe_guarded', guarded)
+    if outcome == 'complete':
+        result = asyncio.run(dc.dub_transcribe(job_id))
+        assert result['source_lang'] == 'en'
+        assert result['full_transcript'] == 'hi'
+        assert job['segments'] != original_segments
+        assert job['dubbed_tracks']['en']['path'] == 'concurrently-published.wav'
+    else:
+        error_type = asyncio.CancelledError if outcome == 'cancelled' else HTTPException
+        with pytest.raises(error_type) as error:
+            asyncio.run(dc.dub_transcribe(job_id))
+        if outcome in ('deleted', 'replaced'):
+            assert error.value.status_code == 404
+        assert job['segments'] == original_segments
+        assert job['source_lang'] == 'old'
+        if outcome == 'replaced':
+            assert dc._dub_jobs[job_id] == {'segments': [], 'replacement': True}
