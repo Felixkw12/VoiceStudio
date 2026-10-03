@@ -1,5 +1,11 @@
 # Electron storage settings
 
+> **Historical context:** this page was written while the Electron and Tauri apps
+> coexisted. Mentions of Tauri helpers, pages, tests and regression results describe
+> that migration period; the Tauri shell has since been removed and the shared code
+> now lives in `electron/src/shared/`. Existing Tauri installs: see the
+> [migration guide](electron-migration.md).
+
 Settings > Storage reads the existing cached disk report, shows volume use/free space, model cache, application data, engine environments and temporary files, and marks incomplete scans explicitly. Largest models and data subtotals expand inline. Warning formatting and byte formatting are shared with Tauri.
 
 Storage scan budgets are checked between files in large flat directories and between loose application-data entries. A scan that exhausts its budget reports partial bytes and a timeout warning, including an incomplete Other subtotal. A single operating-system filesystem call can still take longer than the budget.

@@ -1,5 +1,11 @@
 # Electron dubbing workspace
 
+> **Historical context:** this page was written while the Electron and Tauri apps
+> coexisted. Mentions of Tauri helpers, pages, tests and regression results describe
+> that migration period; the Tauri shell has since been removed and the shared code
+> now lives in `electron/src/shared/`. Existing Tauri installs: see the
+> [migration guide](electron-migration.md).
+
 Visual-context analysis owns its extracted frames in one background worker. Completed or failed analysis removes its entire temporary frame directory. If the request is cancelled while native work is running, cleanup stays with that worker and occurs when it finishes, so cancellation neither deletes active frames nor leaves them behind after completion.
 
 The idle workspace includes an original/dubbed demo comparison with compact
