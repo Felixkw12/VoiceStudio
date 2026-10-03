@@ -2191,7 +2191,8 @@ async def dub_generate(job_id: str, req: DubRequest):
                     published_job["seg_wav_kind"] = _kind
                     _save_job(job_id, published_job)
 
-                job.clear()
+                # Keep the shared job populated for readers already holding a
+                # reference. Publication only adds/replaces top-level fields.
                 job.update(published_job)
                 return True
 

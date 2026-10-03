@@ -425,7 +425,9 @@ a separate resume cache with validated engine and reference revisions, rather th
 replacing the committed cache with partial output.
 
 Track publication runs in a worker thread so file backups and SQLite waits do
-not occupy the async event loop. Source validation, file installation and the
+not occupy the async event loop. The shared job retains its source fields while
+completed metadata is applied, including for readers holding an existing job
+reference. Source validation, file installation and the
 strict database save share the job lock; a failed save rolls back the audio
 replacement. Once that publication transaction has started, cancellation
 waits for its commit or rollback before removing staging files. A completed

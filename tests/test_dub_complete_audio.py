@@ -384,6 +384,34 @@ def test_qc_annotations_during_assembly_do_not_discard_render(render_dub, monkey
     assert render_dub.job['segments'][0]['text'] == 'hello'
 
 
+def test_publication_keeps_source_fields_visible_to_existing_job_readers(render_dub, monkeypatch):
+    from api.routers import dub_generate as dg
+
+    observed = []
+
+    class ObservedJob(dict):
+        # Record each state exposed by an in-place publication step. Other
+        # tasks can already hold this dictionary without reacquiring the lock.
+        def clear(self):
+            super().clear()
+            observed.append((self.get('duration'), 'segments' in self))
+
+        def update(self, *args, **kwargs):
+            super().update(*args, **kwargs)
+            observed.append((self.get('duration'), 'segments' in self))
+
+        def __deepcopy__(self, memo):
+            return copy.deepcopy(dict(self), memo)
+
+    job = ObservedJob(render_dub.job)
+    monkeypatch.setattr(dg, '_get_job', lambda _: job)
+    events = render_dub.run()
+
+    assert any(event['type'] == 'done' for event in events)
+    assert observed and all(state == (4.0, True) for state in observed)
+    assert job['dubbed_tracks']['en']['path'].endswith('dubbed_en.wav')
+
+
 def test_publication_keeps_event_loop_responsive(render_dub, monkeypatch):
     import threading
     from api.routers import dub_generate as dg
