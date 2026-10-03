@@ -236,3 +236,62 @@ def test_inert_chinese_rows_share_supported_scope_matching(client, code):
     assert {entry["term"] for entry in result["inert_entries"]} == {
         "global", "base", "simplified",
     }
+
+
+@pytest.mark.parametrize('language', ['Spanish', 'es', 'es-MX', 'sp'])
+def test_saved_legacy_spanish_scope_still_applies_and_round_trips(client, language):
+    from core.db import db_conn
+    from services.pronunciation import apply_lexicon, load_dict_for_request
+
+    # Old POST /pronunciation stored the picker name Spanish as its first two
+    # letters. Insert the actual old representation, bypassing today's writer.
+    with db_conn() as conn:
+        conn.execute(
+            'INSERT INTO pronunciation_entries '
+            '(id, term, replacement, type, language, enabled, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            ('legacy-spanish', 'GIF', 'jiff', 'respelling', 'sp', 1, '2026-01-01'),
+        )
+    assert client.post('/pronunciation/test', json={
+        'text': 'GIF', 'language': language,
+    }).json()['substituted'] == 'jiff'
+    assert apply_lexicon('GIF', load_dict_for_request(language)) == 'jiff'
+    exported = client.get('/pronunciation/export').json()
+    assert exported['entries'][0]['language'] == 'sp', 'reads must not rewrite user rows'
+    assert client.post('/pronunciation/import', json={**exported, 'replace': True}).status_code == 200
+    assert client.get('/pronunciation/export').json()['entries'][0]['language'] == 'es'
+    assert client.post('/pronunciation/test', json={
+        'text': 'GIF', 'language': language,
+    }).json()['substituted'] == 'jiff'
+
+
+def test_legacy_spanish_never_leaks_into_another_bundled_language():
+    from omnivoice.utils.lang_map import LANG_NAME_TO_ID
+    from services.pronunciation import apply_pronunciation
+
+    row = {'term': 'GIF', 'replacement': 'jiff', 'type': 'respelling',
+           'language': 'sp', 'enabled': 1}
+    for name, code in LANG_NAME_TO_ID.items():
+        expected = 'jiff' if code == 'es' else 'GIF'
+        assert apply_pronunciation('GIF', [row], name) == expected, name
+        assert apply_pronunciation('GIF', [row], code) == expected, code
+
+
+@pytest.mark.parametrize('scope,languages', [
+    ('ge', ['German', 'Georgian', 'de', 'ka']),
+    ('po', ['Polish', 'Portuguese', 'pl', 'pt']),
+    ('ak', ['Akebu', 'keu']),
+    ('qu', ['Quiotepec Chinantec', 'chq']),
+    ('vo', ['Votic', 'vot']),
+])
+def test_other_legacy_or_literal_codes_are_not_guessed(scope, languages):
+    from services.pronunciation import apply_pronunciation, normalize_language_scope
+
+    # A unique picker prefix is insufficient: e.g. ak/qu/vo are real ISO codes
+    # outside this picker, while ge/po have multiple possible source names.
+    row = {'term': 'GIF', 'replacement': 'literal', 'type': 'respelling',
+           'language': scope, 'enabled': 1}
+    assert normalize_language_scope(scope) == scope
+    assert apply_pronunciation('GIF', [row], scope) == 'literal'
+    for language in languages:
+        assert apply_pronunciation('GIF', [row], language) == 'GIF'

@@ -178,13 +178,17 @@ def save_lexicon(path, lexicon: Optional[dict]) -> dict[str, str]:
 
 _ALL_LANG = "*"
 _CHINESE_SCRIPT_SCOPES = {"cmn-hans", "cmn-hant", "zho-hans", "zho-hant"}
+# Old writers truncated picker names. Spanish is the only bundled sp-prefix
+# name, and sp is not an ISO language code. Do not infer more aliases merely
+# from picker absence: ak/qu/vo, for example, are valid codes outside the map.
+_LEGACY_SCOPE_ALIASES = {"sp": "es"}
 
 
 def normalize_language_scope(language: Optional[str]) -> Optional[str]:
     """Resolve picker names and ISO region tags to a dictionary language ID.
 
     Auto/unset/global requests have no language pin. Unknown values remain
-    literal: old truncated codes cannot be unambiguously assigned a language.
+    literal, except explicitly audited unambiguous legacy truncated scopes.
     """
     if not language:
         return None
@@ -196,6 +200,8 @@ def normalize_language_scope(language: Optional[str]) -> Optional[str]:
         return aliases[value]
     if value in LANG_NAME_TO_ID:
         return LANG_NAME_TO_ID[value]
+    if value in _LEGACY_SCOPE_ALIASES:
+        return _LEGACY_SCOPE_ALIASES[value]
     tag = value.replace("_", "-")
     if tag in _CHINESE_SCRIPT_SCOPES:
         return tag
