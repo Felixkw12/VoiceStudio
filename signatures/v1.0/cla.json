@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "document": ".github/CLA-1.0.md",
+  "signatures": [
+    {
+      "login": "diretor-beep",
+      "id": 333128032,
+      "issue": 2586,
+      "comment_id": 5963584744,
+      "signed_at": "2026-10-03T00:24:26Z",
+      "version": "1.0",
+      "repo_id": 1206390571,
+      "body_sha256": "21a9406dda85f3c9e1f8b4b331ffff5234c7dfe9f978747e8058edd5e05f8145"
+    }
+  ]
+}
