@@ -441,7 +441,11 @@ commit stays published and reports a completed task even if cancellation arrives
 during it. Async reads, export/QC updates and ingest persistence wait for the
 shared lock in workers, so they cannot prevent the event loop from handling
 cancellation while publication is waiting on disk. Deleting a job
-serializes with publication and cannot leave a resurrected history row.
+serializes with publication and cannot leave a resurrected history row. Cold
+reads hold the same lock through SQLite hydration, including when a deleted
+ID is explicitly revived for a new ingest. Cancelling
+an ingest waits for an in-flight save, then withdraws its history row before
+removing files.
 
 Subtitle imports re-read the current job when applying uploaded cues. Imports,
 caption cleanup, transcription source updates, and QC share the publication
@@ -449,4 +453,6 @@ lock, so an edit arriving during publication is applied afterward. Transcription
 keeps new source fields private until completion and refuses to publish into a
 deleted or replaced job. If source text, timing or speaker assignments change
 during transcription, the result is rejected with a localized message and the
-newer edits remain intact. Concurrently completed dub tracks are preserved.
+newer edits remain intact. Queued transcription updates are cancelled before
+admission; an already-admitted source commit settles before cancellation
+returns. Concurrently completed dub tracks are preserved.

@@ -237,13 +237,54 @@ def test_cancelled_transcription_waiting_for_publication_keeps_source_private(du
         try:
             await asyncio.wait_for(contended.wait(), 10)
             saving.cancel()
+            rendezvous = asyncio.Event()
+            loop.call_soon(rendezvous.set)
+            await rendezvous.wait()
+            assert not saving.done(), "cancelled ASR detached its queued source worker"
+            release.set()
             with pytest.raises(asyncio.CancelledError):
                 await saving
-            release.set()
             await asyncio.wait_for(finished.wait(), 10)
             await holding
             assert dc._transcription_source(job) == original
         finally:
             release.set()
             await asyncio.gather(saving, holding, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_cancellation_waits_for_admitted_transcription_commit(dub, monkeypatch):
+    import threading
+
+    dc, job_id, _ = dub
+    job = dc._dub_jobs[job_id]
+    original = dc._transcription_source(job)
+    release = threading.Event()
+    completed = []
+    async def exercise():
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+        def save(*_):
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(2)
+            completed.append(True)
+        monkeypatch.setattr(dc, '_save_job', save)
+        saving = asyncio.create_task(dc._save_transcription(
+            job_id, job, original, {'full_transcript': 'committed transcript'},
+        ))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            saving.cancel()
+            rendezvous = asyncio.Event()
+            loop.call_soon(rendezvous.set)
+            await rendezvous.wait()
+            assert not saving.done(), 'ASR commit worker escaped cancellation'
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await saving
+            assert completed == [True]
+            assert job['full_transcript'] == 'committed transcript'
+        finally:
+            release.set()
+            await asyncio.gather(saving, return_exceptions=True)
     asyncio.run(exercise())

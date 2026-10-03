@@ -305,7 +305,7 @@ def find_cached_job(content_hash: str, exclude_job_id: str) -> Optional[dict]:
 # ── Job state (in-memory + SQLite fallback) ────────────────────────────────
 
 
-async def run_job_operation(operation, *args, **kwargs):
+async def run_job_operation(operation, *args, on_cancel=None, **kwargs):
     """Wait for blocking job work to settle before cancellation can clean up.
 
     The shared lock may be held during audio replacement and SQLite writes.
@@ -319,6 +319,8 @@ async def run_job_operation(operation, *args, **kwargs):
     try:
         return await asyncio.shield(pending)
     except (asyncio.CancelledError, GeneratorExit):
+        if on_cancel is not None:
+            on_cancel()
         while not pending.done():
             try:
                 await asyncio.shield(pending)
@@ -335,23 +337,26 @@ def get_job(job_id: str) -> Optional[dict]:
     """Look up a job. Checks the in-memory cache first, then falls back to
     `dub_history.job_data` so saved projects still resolve after restart.
     """
+    # Keep lookup + hydration in the same transaction boundary as deletion
+    # and explicit same-id revival. Async callers dispatch this to a worker.
     with _dub_jobs_lock:
         if job_id in _dub_jobs:
             return _dub_jobs[job_id]
-    with db_conn() as conn:
-        row = conn.execute("SELECT job_data FROM dub_history WHERE id=?", (job_id,)).fetchone()
-    if row and row["job_data"]:
-        try:
-            job = json.loads(row["job_data"])
-            with _dub_jobs_lock:
+        if job_id in _withdrawn_jobs:
+            return None
+        with db_conn() as conn:
+            row = conn.execute("SELECT job_data FROM dub_history WHERE id=?", (job_id,)).fetchone()
+        if row and row["job_data"]:
+            try:
+                job = json.loads(row["job_data"])
                 _dub_jobs[job_id] = job
-            return job
-        except json.JSONDecodeError:
-            # job_id arrives from request paths — strip newlines so a crafted
-            # id can't forge extra log lines (py/log-injection).
-            safe_id = str(job_id).replace("\r", "").replace("\n", "")
-            logger.exception("Failed to decode dub_history.job_data for %s", safe_id)
-    return None
+                return job
+            except json.JSONDecodeError:
+                # job_id arrives from request paths — strip newlines so a crafted
+                # id can't forge extra log lines (py/log-injection).
+                safe_id = str(job_id).replace("\r", "").replace("\n", "")
+                logger.exception("Failed to decode dub_history.job_data for %s", safe_id)
+        return None
 
 
 def put_job(job_id: str, job: dict) -> None:
@@ -1308,6 +1313,18 @@ def parse_vtt_segments(vtt_path: str) -> list[dict]:
     return segments
 
 
+def _discard_cancelled_ingest(job_id: str, job_dir: str) -> None:
+    """Withdraw persisted state before removing the files it references."""
+    def delete_rows():
+        with db_conn() as conn:
+            conn.execute("DELETE FROM dub_history WHERE id=?", (job_id,))
+
+    with _dub_jobs_lock:
+        purge_jobs([job_id], delete_rows=delete_rows)
+        # A database failure leaves the files intact for the retained row.
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
 async def ingest_pipeline(
     job_id: str,
     job_dir: str,
@@ -1683,10 +1700,7 @@ async def ingest_pipeline(
     except asyncio.CancelledError:
         logger.info("Dub prep cancelled for job %s; killing subprocesses and cleaning up", log_safe(job_id))
         kill_job_procs(job_id)
-        try:
-            shutil.rmtree(job_dir, ignore_errors=True)
-        finally:
-            _dub_jobs.pop(job_id, None)
+        await run_job_operation(_discard_cancelled_ingest, job_id, job_dir)
         yield prep_event("cancelled")
         raise
     except Exception as e:

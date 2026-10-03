@@ -102,7 +102,7 @@ metadata and the backend fallback mirror it.
 
 ### Fixed
 
-- Preserve subtitle edits made during transcription, keep dub lock waits off the event loop, and report a committed track as complete after late cancellation (#2585)
+- Preserve subtitle edits made during transcription, keep dub lock waits off the event loop, report committed tracks as complete after late cancellation, and prevent cancelled ingest history from referencing deleted files (#2585)
 - Dub publication keeps file and database work off the event loop, preserves source metadata, waits safely on cancellation, and restores audio after save failures (#2585)
 - Dubbing finishes when quality-check annotations arrive during assembly and clears measurements of replaced audio while still protecting subtitle edits (#2585)
 

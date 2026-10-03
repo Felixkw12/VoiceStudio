@@ -300,11 +300,10 @@ def _publish_transcription(job_id, job, source_snapshot, updates, cancelled):
 async def _save_transcription(job_id, job, source_snapshot, updates):
     """Wait for the publication lock off-loop; cancelled queued work stays private."""
     cancelled = threading.Event()
-    try:
-        await asyncio.to_thread(_publish_transcription, job_id, job, source_snapshot, updates, cancelled)
-    except asyncio.CancelledError:
-        cancelled.set()
-        raise
+    await dub_pipeline.run_job_operation(
+        _publish_transcription, job_id, job, source_snapshot, updates, cancelled,
+        on_cancel=cancelled.set,
+    )
 
 
 def _mark_job_aborted(job):
