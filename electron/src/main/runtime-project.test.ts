@@ -1,8 +1,10 @@
 // @vitest-environment node
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, writeFile, statfs } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { downloadRuntimeInstaller } from './runtime-download';
+import * as pthAscii from './pth-ascii';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   installRuntime,
@@ -60,6 +62,11 @@ function forcePlatform(platform: NodeJS.Platform) {
   vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
 }
 beforeEach(() => {
+  // Runtime fixtures must not depend on live region-probe latency.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true })),
+  );
   // Installation fixtures exercise a supported host; the Intel case overrides it.
   if (process.platform === 'darwin') vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
   // The baseline fixtures model an NVIDIA host (the lock's default wheels) whatever
@@ -75,14 +82,43 @@ afterEach(async () => {
 });
 
 describe('packaged runtime setup', () => {
+  it.each([0, 1])('verifies the runtime when .pth repair attempt %i fails', async (failedAttempt) => {
+    const { bundle, project } = await fixture();
+    let attempt = 0;
+    const heal = vi.spyOn(pthAscii, 'asciiSafePthFiles').mockImplementation(async () => {
+      if (attempt++ === failedAttempt) throw Object.assign(new Error('file locked'), { code: 'EPERM' });
+      return [];
+    });
+    const run = vi.fn(async () => {});
+
+    await installRuntime(bundle, project, 'uv', run, new AbortController().signal);
+
+    expect(heal).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledWith(runtimePython(project), ['-c', RUNTIME_IMPORT_PROBE], project);
+    expect(await readFile(join(project, '.runtime-ready'), 'utf8')).not.toBe('');
+  });
+
+  it('does not mark a runtime ready when verification fails after a .pth repair error', async () => {
+    const { bundle, project } = await fixture();
+    vi.spyOn(pthAscii, 'asciiSafePthFiles').mockRejectedValue(new Error('file locked'));
+    const run = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes(RUNTIME_IMPORT_PROBE)) throw new Error('Python import failed');
+    });
+
+    await expect(installRuntime(bundle, project, 'uv', run, new AbortController().signal))
+      .rejects.toThrow('Python import failed');
+    await expect(readFile(join(project, '.runtime-ready'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('rejects Intel Macs before creating files or downloading dependencies', async () => {
     const { bundle, project } = await fixture();
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
     const arch = vi.spyOn(process, 'arch', 'get').mockReturnValue('x64');
     const run = vi.fn();
     try {
-      await expect(installRuntime(bundle, project, null, run, new AbortController().signal))
-        .rejects.toMatchObject({ code: 'INTEL_MAC_UNSUPPORTED' });
+      await expect(
+        installRuntime(bundle, project, null, run, new AbortController().signal),
+      ).rejects.toMatchObject({ code: 'INTEL_MAC_UNSUPPORTED' });
       expect(run).not.toHaveBeenCalled();
       expect(statfs).not.toHaveBeenCalled();
     } finally {
@@ -370,7 +406,9 @@ describe('packaged runtime setup', () => {
     });
     await installRuntime(bundle, project, 'uv', run, new AbortController().signal);
     expect(run.mock.calls.find(([, args]) => args[0] === 'cache')?.[1]).toEqual([
-      'cache', 'clean', 'sentencepiece',
+      'cache',
+      'clean',
+      'sentencepiece',
     ]);
     const sync = run.mock.calls.find(([, args]) => args[0] === 'sync');
     expect(sync?.[1]).toContain('sentencepiece');
@@ -434,6 +472,14 @@ describe('packaged runtime setup', () => {
     expect(await runtimeCompatible(bundle, project)).toBe(true);
     await writeFile(join(project, '.runtime-ready'), 'legacy-manifest-only-stamp');
     expect(await runtimeCompatible(bundle, project)).toBe(false);
+  });
+  it('does not copy the web UI into the runtime project', async () => {
+    const { bundle, project } = await fixture();
+    await stageRuntimeSources(bundle, project);
+    // The backend serves the packaged build in place (OMNIVOICE_FRONTEND_DIST);
+    // a staged copy would only ever be a stale second source of truth (#2599).
+    expect(existsSync(join(project, 'frontend'))).toBe(false);
+    expect(existsSync(join(project, 'backend', 'main.py'))).toBe(true);
   });
   it('replaces obsolete bundled modules without removing the interpreter or user files', async () => {
     const { bundle, project } = await fixture();

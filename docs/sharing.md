@@ -18,7 +18,15 @@ You can also drive this from **Settings → Sharing & Remote Access**.
 
 Desktop installers include the web interface used by the LAN address; another
 device does not need VoiceStudio installed and the host does not need a source
-checkout or a separate frontend development server.
+checkout or a separate frontend development server. The backend serves the web
+build shipped inside the running app (`OMNIVOICE_FRONTEND_DIST`), so after an
+update LAN devices get the matching interface with no extra step.
+
+**"Web interface unavailable" on the other device:** the backend is running
+but has no web build to serve. Desktop builds before the fix for #2599 had this
+problem on every OS; update to the latest release. In a source checkout run
+`bun run build:web` and restart the backend. Another device is never redirected
+to `localhost`, because on that device it is not VoiceStudio.
 
 ### How the PIN works
 - A fresh 6-digit PIN is generated each time you enable sharing; it is never written to disk.
@@ -46,4 +54,4 @@ Tailscale proxies the loopback backend directly, so — like LAN sharing — it 
 
 ## Notes
 - Both paths leave the running model and in-flight jobs **completely untouched**.
-- Server deployments (docker, `OMNIVOICE_BIND_HOST=0.0.0.0`) manage their own networking; the in-app toggle is for the desktop app and is unaffected by these flows.
+- Server deployments (Docker, or a source backend started with `OMNIVOICE_BIND_HOST=0.0.0.0`) manage their own networking; the in-app toggle is for the desktop app and is unaffected by these flows.

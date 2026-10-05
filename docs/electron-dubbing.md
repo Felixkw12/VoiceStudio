@@ -1,5 +1,11 @@
 # Electron dubbing workspace
 
+> **Historical context:** this page was written while the Electron and Tauri apps
+> coexisted. Mentions of Tauri helpers, pages, tests and regression results describe
+> that migration period; the Tauri shell has since been removed and the shared code
+> now lives in `electron/src/shared/`. Existing Tauri installs: see the
+> [migration guide](electron-migration.md).
+
 The idle workspace includes an original/dubbed demo comparison with compact
 player controls. Sync playheads aligns positions without starting both videos.
 Sample transcript edits are retained per language while the demo is mounted;
@@ -14,9 +20,11 @@ translate, review the text, then generate. Completed tracks can be previewed and
 exported through the native save dialog.
 
 The import card can clear a pasted URL and its cookie attachment before ingest.
-After loading a source, Remove video returns to the import card, discarding the
-transcript and edit history while retaining production settings. It asks for
-confirmation when transcript edits or segments would be discarded.
+After loading a source, Remove video (Remove audio for audio sources) returns to
+the import card, with its file and URL options, discarding the transcript and edit
+history while retaining production settings. It stays available after an
+interrupted or failed run, and asks for confirmation when transcript edits or
+segments would be discarded.
 
 Segment rows scan as compact source/translation pairs: speaker, voice, fit state,
 selection and timestamp stay visible, while row actions reveal on hover or keyboard

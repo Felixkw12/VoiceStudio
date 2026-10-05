@@ -450,8 +450,24 @@ MODEL_LOAD_HEARTBEAT_GRACE_S = float(
 # Without a cap, a load that heartbeats but never finishes would hold its
 # worker forever. 1800s of extension ≈ a 5 GB model at ~2.5 MB/s on top of the
 # 300s base — beyond that, telling the user is better than silently waiting.
-MODEL_LOAD_EXTRA_TIMEOUT_S = float(
-    os.environ.get("OMNIVOICE_MODEL_LOAD_TIMEOUT_S", "1800.0"))
+#
+# OMNIVOICE_PROGRESS_EXTENSION_CAP_S names it. The old name,
+# OMNIVOICE_MODEL_LOAD_TIMEOUT_S, read as the load ceiling that
+# OMNIVOICE_MODEL_LOAD_TIMEOUT (no _S) really is; it stays accepted as a
+# deprecated alias so existing configurations keep their value.
+PROGRESS_EXTENSION_CAP_ENV = "OMNIVOICE_PROGRESS_EXTENSION_CAP_S"
+PROGRESS_EXTENSION_CAP_LEGACY_ENV = "OMNIVOICE_MODEL_LOAD_TIMEOUT_S"
+
+
+def progress_extension_cap_s(env=os.environ) -> float:
+    """The heartbeat extension cap, honoring the deprecated alias."""
+    return float(
+        env.get(PROGRESS_EXTENSION_CAP_ENV)
+        or env.get(PROGRESS_EXTENSION_CAP_LEGACY_ENV)
+        or "1800.0")
+
+
+MODEL_LOAD_EXTRA_TIMEOUT_S = progress_extension_cap_s()
 # The cap also grows with the job's own budget: a job that keeps reporting
 # progress may run for this many extra budgets. A fixed 1800s cap made a job's
 # length a hard limit however steadily it progressed. A 50k-character audiobook
@@ -3104,7 +3120,7 @@ async def _load_model_with_timeout():
         ) from exc
 
 
-async def get_model():
+async def get_model(*, allow_load: bool = True):
     global model, _last_used
     _last_used = time.time()
     if model is not None:
@@ -3124,6 +3140,11 @@ async def get_model():
         # + cache drop + ASR teardown that can block for hundreds of ms.
         await asyncio.get_running_loop().run_in_executor(None, make_room_before_generate)
         return model
+
+    # Opportunistic profile samples must never load weights, including when
+    # ASR or idle cleanup evicted them after the caller's residency check.
+    if not allow_load:
+        raise RuntimeError("VoiceStudio model is not loaded")
 
     if running_on_gpu_pool():
         # Same reasoning as _heal_tts_placement below, applied to the COLD
@@ -4062,3 +4083,18 @@ def unload_diarization_pipeline() -> bool:
     except Exception:
         logger.debug("Could not clear accelerator cache after diarisation unload", exc_info=True)
     return True
+
+
+def generate_budget_s() -> dict[str, float]:
+    """The active /generate budgets, including operator overrides.
+
+    The client backstop (electron/src/shared/utils/generateBudget.ts) takes the
+    larger of these and its built-in defaults, so raising a timeout through the
+    environment never makes the UI give up on a job that is still running.
+    """
+    return {
+        "modelLoad": _model_load_timeout(),
+        "queueWait": GPU_QUEUE_TIMEOUT_S,
+        "executionBase": max(GPU_JOB_TIMEOUT_S, CPU_JOB_TIMEOUT_S),
+        "progressExtensionCap": progress_extension_cap_s(),
+    }

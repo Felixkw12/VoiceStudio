@@ -571,8 +571,8 @@ _phase_a_finished = threading.Event()
 
 def _phase_a_build() -> None:
     """Everything heavy that used to run at module scope, same relative
-    order per step. Idempotent. Imports are literal statements so
-    PyInstaller's tracer still sees them (backend.spec unchanged).
+    order per step. Idempotent. Imports are literal statements so static
+    import analysis still sees them.
 
     `_phase_a_finished` is set on EVERY exit — including the already-built
     early return — so a shutdown that observed `_phase_a_started` can never
@@ -793,10 +793,17 @@ def _phase_a_finalize() -> None:
         app.mount("/demo_audio", StaticFiles(directory=_demo_dir), name="demo_audio")
 
     # SPA shell LAST so the "/" StaticFiles mount can't shadow any router.
-    from core.spa_inject import frontend_dist_dir, is_valid_public_api_base, inject_api_base
+    from core.spa_inject import (
+        dev_ui_redirect,
+        frontend_available,
+        frontend_dist_dir,
+        inject_api_base,
+        is_valid_public_api_base,
+        web_ui_missing_body,
+    )
 
     _frontend_path = frontend_dist_dir()
-    if os.path.exists(_frontend_path):
+    if frontend_available(_frontend_path):
         # Runtime API-base override (Docker / reverse-proxy): inject
         # OMNIVOICE_PUBLIC_API_BASE into index.html; unset → untouched.
 
@@ -827,9 +834,21 @@ def _phase_a_finalize() -> None:
         app.mount("/", StaticFiles(directory=_frontend_path, html=True), name="frontend")
     else:
 
+        logging.getLogger("omnivoice.api").info(
+            "No web UI build at %s; \"/\" serves an explanation to other devices.",
+            _frontend_path,
+        )
+
         @app.get("/", include_in_schema=False)
-        def _dev_fallback():
-            return RedirectResponse(url=f"http://localhost:{_ui_port()}")
+        def _no_web_ui(request: Request):
+            # Only a local browser may be sent to the local dev UI; a LAN
+            # device redirected to localhost reaches itself, not us (#2599).
+            client = request.client.host if request.client else None
+            target = dev_ui_redirect(client, request.headers.get("host", ""), _ui_port())
+            if target:
+                return RedirectResponse(url=target)
+            media_type, body = web_ui_missing_body(request.headers.get("accept", ""))
+            return Response(body, status_code=503, media_type=media_type)
 
     # An early /docs or /openapi.json hit may have cached a schema without
     # the routers — bust it so the next request rebuilds the full one.
@@ -912,6 +931,13 @@ async def _phase_b(app: FastAPI) -> None:
             logger.info("Startup: marked %d orphaned job(s) as failed.", swept)
     except Exception:
         logger.exception("Startup job-sweep failed (non-fatal).")
+    # Superseded voice takes kept for in-flight renders (#2535) past their grace.
+    try:
+        from api.routers.profiles import sweep_retired_voice_files
+
+        sweep_retired_voice_files()
+    except Exception:
+        logger.exception("Startup retired-voice sweep failed (non-fatal).")
     # #2279: note the voices root in the longform cache before anything can
     # move the data dir, so legacy-keyed chapters stay findable after a move.
     from services.longform_render import record_startup_voices_root
@@ -1333,10 +1359,10 @@ def prepare_deliberate_shutdown_during_startup(request: Request):
     a false crash sentinel behind.  Keep this one tiny control route available
     from socket bind; its authorization remains identical to the system router.
     """
-    from api.dependencies import require_admin
+    from api.dependencies import check_admin
     from core import run_sentinel
 
-    require_admin(request)
+    check_admin(request)
     return {"prepared": run_sentinel.clear_sentinel()}
 
 
@@ -1777,25 +1803,12 @@ class BearerKeyMiddleware:
         return await self.app(scope, receive, send)
 
 
-# UI dev-server port — single-sourced from OMNIVOICE_UI_PORT so a user who
-# moves the Vite dev server off 3901 still gets a matching CORS allow-list.
-def _ui_port() -> int:
-    raw = os.environ.get("OMNIVOICE_UI_PORT")
-    if raw is None:
-        return 3901
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return 3901
+# Origin policy is single-sourced in core.csrf: the UI port (OMNIVOICE_UI_PORT,
+# alias VOICESTUDIO_UI_PORT) and OMNIVOICE_ALLOWED_ORIGINS feed both this CORS
+# allow-list and the CSRF origin checks, so the two can never disagree.
+from core.csrf import CORS_EXPOSED_HEADERS, allowed_origin_values, ui_port as _ui_port
 
-
-from core.csrf import DEFAULT_DESKTOP_ORIGINS
-
-_ui = _ui_port()
-_allowed = os.environ.get(
-    "OMNIVOICE_ALLOWED_ORIGINS",
-    f"http://localhost:{_ui},http://127.0.0.1:{_ui}," + ",".join(DEFAULT_DESKTOP_ORIGINS),
-).split(",")
+_allowed = allowed_origin_values()
 
 # Registered FIRST → innermost: the startup gate holds every request except
 # the two probe paths until the deferred startup completes (and is a no-op
@@ -1820,14 +1833,16 @@ app.add_middleware(BearerKeyMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _allowed if o.strip()],
+    allow_origins=_allowed,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     # The marker must be readable cross-origin too — a browser UI served from
     # another origin is exactly the deployment that needs to tell "the backend
     # answered 404" from "something else answered 404" (#1385).
-    expose_headers=["Content-Disposition", BACKEND_MARKER_HEADER],
+    # The /generate take metadata (X-Audio-Id, X-Seed, routing, ...) is read
+    # from headers too, so every header the client reads is exposed.
+    expose_headers=[*CORS_EXPOSED_HEADERS, BACKEND_MARKER_HEADER],
 )
 
 # Registered LAST, which in Starlette means OUTERMOST — so the marker lands on
@@ -1964,7 +1979,7 @@ if __name__ == "__main__":
         "--health-check",
         action="store_true",
         help="Boot the server, poll /health, exit 0 on success / 1 on timeout. "
-             "Used by the release-time installer smoke step in .github/workflows/release.yml.",
+             "A self-contained smoke test for an installed or packaged backend.",
     )
     parser.add_argument(
         "--diagnose",
@@ -2044,9 +2059,9 @@ if __name__ == "__main__":
     # SECURITY: default to loopback (127.0.0.1) so the API isn't reachable
     # from the LAN out of the box. VoiceStudio ships no authentication; binding
     # to 0.0.0.0 by default would expose every router on this process to any
-    # host on the user's network. Docker images that need to publish the port
-    # set OMNIVOICE_BIND_HOST=0.0.0.0 explicitly (see deploy/docker-compose.yml)
-    # — the host-side port mapping is what enforces 127.0.0.1-only there.
+    # host on the user's network. The Docker image never reaches this block:
+    # its uvicorn ENTRYPOINT binds 0.0.0.0 itself (deploy/Dockerfile), and the
+    # host-side `127.0.0.1:` port mapping is what keeps it loopback-only there.
     _bind_host = os.environ.get("OMNIVOICE_BIND_HOST", "127.0.0.1")
 
     def _port_taken(host: str, port: int) -> "OSError | None":

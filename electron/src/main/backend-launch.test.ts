@@ -22,7 +22,10 @@ vi.mock('node:fs', async (importOriginal) => ({
 }));
 vi.mock('./runtime-project', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./runtime-project')>()),
-  runtimeDependenciesReady: vi.fn(async () => state.ready),
+  runtimeDependenciesReady: vi.fn(async (_root: string, onFailure?: (detail: string) => void) => {
+    if (!state.ready) onFailure?.("ModuleNotFoundError: No module named 'sentencepiece'");
+    return state.ready;
+  }),
 }));
 vi.mock('./legacy-storage', () => ({
   legacyStorageEnv: () => ({
@@ -31,6 +34,7 @@ vi.mock('./legacy-storage', () => ({
   }),
 }));
 import {
+  devRendererPort,
   resolveSpawnPlan,
   managedBackendSpawnOptions,
   spawnFailureMessage,
@@ -76,6 +80,22 @@ it('requires setup when an interpreter exists but required imports fail', async 
   expect(await resolveSpawnPlan(3900)).toEqual({
     error: expect.stringContaining('bun run setup:api'),
   });
+});
+
+it('names the failing import or the absent interpreter instead of one vague message (#2555)', async () => {
+  vi.stubEnv('OMNIVOICE_BACKEND_CMD', '');
+  state.ready = false;
+  const incomplete = await resolveSpawnPlan(3900);
+  if (!('error' in incomplete)) throw new Error('expected a setup error');
+  expect(incomplete.error).toContain(
+    "is incomplete: ModuleNotFoundError: No module named 'sentencepiece'.",
+  );
+
+  state.installed = false;
+  const missing = await resolveSpawnPlan(3900);
+  if (!('error' in missing)) throw new Error('expected a setup error');
+  expect(missing.error).toContain('is missing (no .venv');
+  expect(missing.error).not.toContain('incomplete');
 });
 
 it('keeps native fault frames when the production log ring overflows', async () => {
@@ -217,4 +237,19 @@ it('ignores supervisor log lines when this launch printed nothing', async () => 
   expect(supervisor.status.stage).toBe('failed');
   expect(supervisor.status.message).toContain('It printed no output.');
   expect(supervisor.status.message).not.toContain('Reusing compatible');
+});
+
+it('tells the backend the dev renderer port so Sharing reports the real UI port', () => {
+  expect(devRendererPort('http://localhost:3902')).toBe('3902');
+  expect(devRendererPort('app://voicestudio/index.html')).toBeNull();
+  expect(devRendererPort(undefined)).toBeNull();
+  vi.stubEnv('OMNIVOICE_UI_PORT', '');
+  vi.stubEnv('VOICESTUDIO_UI_PORT', '');
+  vi.stubEnv('ELECTRON_RENDERER_URL', 'http://localhost:4102');
+  expect(managedBackendSpawnOptions(3900).env.OMNIVOICE_UI_PORT).toBe('4102');
+  vi.stubEnv('OMNIVOICE_UI_PORT', '4200');
+  expect(managedBackendSpawnOptions(3900).env.OMNIVOICE_UI_PORT).toBe('4200');
+  vi.stubEnv('OMNIVOICE_UI_PORT', '');
+  vi.stubEnv('ELECTRON_RENDERER_URL', '');
+  expect(managedBackendSpawnOptions(3900).env.OMNIVOICE_UI_PORT).toBe('');
 });
