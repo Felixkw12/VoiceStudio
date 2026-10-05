@@ -171,6 +171,46 @@
       "version": "1.0",
       "repo_id": 1206390571,
       "body_sha256": "21a9406dda85f3c9e1f8b4b331ffff5234c7dfe9f978747e8058edd5e05f8145"
+    },
+    {
+      "login": "SomSamantray",
+      "id": 92726151,
+      "issue": 2586,
+      "comment_id": 5964815654,
+      "signed_at": "2026-10-03T02:51:37Z",
+      "version": "1.0",
+      "repo_id": 1206390571,
+      "body_sha256": "abf07da9ab57b3775ad630f353a18a260b378c67146a2a2e021777d36c59648a"
+    },
+    {
+      "login": "drakeo338",
+      "id": 328244157,
+      "issue": 2586,
+      "comment_id": 5964937601,
+      "signed_at": "2026-10-03T03:09:32Z",
+      "version": "1.0",
+      "repo_id": 1206390571,
+      "body_sha256": "c10ec7b42246db6b6ea77043d67dace4ff5b8454bcabbb5f709cee01bd277992"
+    },
+    {
+      "login": "Vaishnavi220506",
+      "id": 183067453,
+      "issue": 2586,
+      "comment_id": 5965276760,
+      "signed_at": "2026-10-03T03:53:48Z",
+      "version": "1.0",
+      "repo_id": 1206390571,
+      "body_sha256": "7ffc884eed9c87715090518e4e468e9b37f7a0cd6a09c0d13cc1f58d276b39ad"
+    },
+    {
+      "login": "Chang-Jin-Lee",
+      "id": 54494793,
+      "issue": 2586,
+      "comment_id": 5965285283,
+      "signed_at": "2026-10-03T03:55:04Z",
+      "version": "1.0",
+      "repo_id": 1206390571,
+      "body_sha256": "c10ec7b42246db6b6ea77043d67dace4ff5b8454bcabbb5f709cee01bd277992"
     }
   ]
 }
